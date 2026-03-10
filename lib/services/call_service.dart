@@ -2,32 +2,76 @@ import 'dart:async';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_base/services/websocket_service.dart';
+import 'package:flutter_base/services/video_api.dart';
+
+typedef IncomingCallCallback = void Function(String callerId, String? callerName, bool isOnlyAudio);
 
 class CallService {
+  static final CallService _instance = CallService._internal();
+  factory CallService() => _instance;
+  CallService._internal();
+
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   MediaStream? _remoteStream;
   final _webSocketService = WebSocketService();
+  final _videoApi = VideoApi();
 
-  // 通话状态
+  final RTCVideoRenderer localRenderer = RTCVideoRenderer();
+  final RTCVideoRenderer remoteRenderer = RTCVideoRenderer();
+  bool _renderersInitialized = false;
+
   final _callStateController = StreamController<CallState>.broadcast();
   Stream<CallState> get callStateStream => _callStateController.stream;
 
-  // 当前通话状态
   CallState _currentState = CallState.idle;
   CallState get currentState => _currentState;
 
-  // 当前通话的对方ID
   String? _currentPeerId;
   String? get currentPeerId => _currentPeerId;
 
-  // 是否是呼叫方
   bool _isCaller = false;
   bool get isCaller => _isCaller;
 
-  // 初始化本地媒体流
+  bool _isOnlyAudio = true;
+  bool get isOnlyAudio => _isOnlyAudio;
+
+  bool _toUserIsReady = false;
+  bool get toUserIsReady => _toUserIsReady;
+
+  Timer? _timer;
+  int _time = 0;
+  int get time => _time;
+
+  final _timeController = StreamController<int>.broadcast();
+  Stream<int> get timeStream => _timeController.stream;
+
+  bool _isAudioEnabled = true;
+  bool get isAudioEnabled => _isAudioEnabled;
+
+  bool _isVideoEnabled = true;
+  bool get isVideoEnabled => _isVideoEnabled;
+
+  StreamSubscription? _subscription;
+  bool _isVideoEventInitialized = false;
+
+  IncomingCallCallback? _onIncomingCall;
+
+  void setOnIncomingCall(IncomingCallCallback callback) {
+    _onIncomingCall = callback;
+  }
+
+  Future<void> initializeRenderers() async {
+    if (_renderersInitialized) {
+      print('renderers 已初始化，跳过');
+      return;
+    }
+    await localRenderer.initialize();
+    await remoteRenderer.initialize();
+    _renderersInitialized = true;
+  }
+
   Future<MediaStream> initializeLocalStream() async {
-    // 请求麦克风权限
     final permissionStatus = await Permission.microphone.request();
     if (permissionStatus != PermissionStatus.granted) {
       throw Exception('麦克风权限被拒绝');
@@ -35,93 +79,249 @@ class CallService {
 
     final constraints = {
       'audio': true,
-      'video': false,
+      'video': !_isOnlyAudio,
     };
 
     _localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    localRenderer.srcObject = _localStream;
+
+    if (_isOnlyAudio) {
+      _localStream!.getVideoTracks().forEach((track) {
+        track.enabled = false;
+      });
+    }
+
     return _localStream!;
   }
 
-  // 创建PeerConnection
-  Future<RTCPeerConnection> _createPeerConnectionInternal() async {
+  Future<RTCPeerConnection> createPeerConnectionInternal() async {
     final config = {
       'iceServers': [
+        {'urls': 'stun:stun.l.google.com:19302'},
+        {'urls': 'stun:stun1.l.google.com:19302'},
+        {'urls': 'stun:stun2.l.google.com:19302'},
+        {'urls': 'stun:stun3.l.google.com:19302'},
+        {'urls': 'stun:stun4.l.google.com:19302'},
         {
-          'urls': 'stun:stun.l.google.com:19302',
+          'urls': 'turn:123.56.168.149:3478',
+          'username': 'webrtc',
+          'credential': 'webrtc123',
         },
         {
-          'urls': 'stun:stun1.l.google.com:19302',
+          'urls': 'turn:123.56.168.149:3478?transport=tcp',
+          'username': 'webrtc',
+          'credential': 'webrtc123',
         },
       ],
+      'sdpSemantics': 'unified-plan',
+      'iceCandidatePoolSize': 10,
     };
 
+    print('创建PeerConnection');
     _peerConnection = await createPeerConnection(config);
 
-    // 添加本地流
     if (_localStream != null) {
-      for (var track in _localStream!.getTracks()) {
-        await _peerConnection!.addTrack(track, _localStream!);
-      }
+      _localStream!.getTracks().forEach((track) {
+        _peerConnection!.addTrack(track, _localStream!);
+      });
     }
 
-    // 监听远程流
-    _peerConnection!.onTrack = (RTCTrackEvent event) {
-      print('收到远程流: ${event.track.kind}');
-      if (event.streams.isNotEmpty) {
-        _remoteStream = event.streams[0];
-      }
-    };
-
-    // 监听ICE候选者
-    _peerConnection!.onIceCandidate = (RTCIceCandidate candidate) {
-      print('生成ICE候选者');
-      if (_currentPeerId != null) {
-        _webSocketService.sendIceCandidate(_currentPeerId!, candidate);
-      }
-    };
-
-    // 监听连接状态变化
-    _peerConnection!.onConnectionState = (RTCPeerConnectionState state) {
-      print('连接状态变化: $state');
-      switch (state) {
-        case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
-          _updateState(CallState.connected);
-          break;
-        case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
-        case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
-        case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-          _updateState(CallState.ended);
-          break;
-        default:
-          break;
-      }
+    _peerConnection!.onIceCandidate = handleICECandidateEvent;
+    _peerConnection!.onIceConnectionState = handleICEConnectionStateChangeEvent;
+    _peerConnection!.onTrack = handleTrackEvent;
+    _peerConnection!.onConnectionState = (state) {
+      print('连接状态: $state');
     };
 
     return _peerConnection!;
   }
 
-  // 发起呼叫
-  Future<void> initiateCall(String calleeId) async {
+  Future<void> handleICECandidateEvent(RTCIceCandidate candidate) async {
+    if (_currentPeerId != null && candidate != null) {
+      print('发送ICE候选者: ${candidate.candidate}');
+      await _videoApi.candidate(_currentPeerId!, {
+        'candidate': candidate.candidate,
+        'sdpMid': candidate.sdpMid,
+        'sdpMLineIndex': candidate.sdpMLineIndex,
+      });
+    }
+  }
+
+  void handleICEConnectionStateChangeEvent(RTCIceConnectionState? state) {
+    print('ICE连接状态: $state');
+    if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
+      _toUserIsReady = true;
+      _destroyTimer();
+      _timer = Timer.periodic(const Duration(seconds: 1), (Timer t) {
+        _time++;
+        _timeController.add(_time);
+      });
+      _updateState(CallState.connected);
+    } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
+        state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+        state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
+      handleHangup();
+    }
+  }
+
+  void handleTrackEvent(RTCTrackEvent event) {
+    print('收到远程流: ${event.track.kind}');
+    if (event.streams.isNotEmpty) {
+      _remoteStream = event.streams[0];
+      remoteRenderer.srcObject = _remoteStream;
+    }
+  }
+
+  void videoEvent() {
+    if (_isVideoEventInitialized) {
+      print('videoEvent 已初始化，跳过');
+      return;
+    }
+    _isVideoEventInitialized = true;
+
+    _subscription = _webSocketService.eventStream.listen((event) {
+      if (event['type'] == 'on-receive-video') {
+        var data = event['content'];
+        print('收到视频事件: ${data['type']}');
+        switch (data['type']) {
+          case 'offer':
+            handleVideoOfferMsg(data);
+            break;
+          case 'answer':
+            handleVideoAnswerMsg(data);
+            break;
+          case 'candidate':
+            handleNewICECandidateMsg(data);
+            break;
+          case 'hangup':
+            handleHangup();
+            break;
+          case 'accept':
+            onOffer();
+            break;
+          case 'invite':
+            handleIncomingCall(data);
+            break;
+        }
+      }
+    });
+  }
+
+  Future<void> handleVideoOfferMsg(Map<String, dynamic> data) async {
+    try {
+      print('处理offer消息');
+      if (_peerConnection == null) {
+        print('PeerConnection未初始化');
+        return;
+      }
+      final RTCSessionDescription desc =
+          RTCSessionDescription(data['desc']['sdp'], data['desc']['type']);
+      await _peerConnection!.setRemoteDescription(desc);
+      RTCSessionDescription localDesc = await _peerConnection!.createAnswer();
+      await _peerConnection!.setLocalDescription(localDesc);
+      await _videoApi.answer(_currentPeerId!, {
+        'sdp': localDesc.sdp,
+        'type': localDesc.type,
+      });
+      print('已发送answer');
+    } catch (e) {
+      print('处理offer失败: $e');
+    }
+  }
+
+  Future<void> handleVideoAnswerMsg(Map<String, dynamic> data) async {
+    try {
+      print('处理answer消息');
+      if (_peerConnection == null) {
+        print('PeerConnection未初始化');
+        return;
+      }
+      final RTCSessionDescription remoteDesc = RTCSessionDescription(
+        data['desc']['sdp'],
+        data['desc']['type'],
+      );
+      await _peerConnection!.setRemoteDescription(remoteDesc);
+      print('已设置远程描述');
+    } catch (e) {
+      print('处理answer失败: $e');
+    }
+  }
+
+  Future<void> handleNewICECandidateMsg(Map<String, dynamic> data) async {
+    try {
+      print('处理ICE候选者消息');
+      if (_peerConnection == null) {
+        print('PeerConnection未初始化');
+        return;
+      }
+      final RTCIceCandidate candidate = RTCIceCandidate(
+        data['candidate']['candidate'],
+        data['candidate']['sdpMid'],
+        data['candidate']['sdpMLineIndex'],
+      );
+      await _peerConnection!.addCandidate(candidate);
+      print('已添加ICE候选者');
+    } catch (e) {
+      print('添加ICE候选者失败: $e');
+    }
+  }
+
+  Future<void> onOffer() async {
+    try {
+      print('创建offer');
+      if (_peerConnection == null) {
+        print('PeerConnection未初始化');
+        return;
+      }
+      RTCSessionDescription offer = await _peerConnection!.createOffer();
+      await _peerConnection!.setLocalDescription(offer);
+      await _videoApi.offer(_currentPeerId!, {
+        'sdp': offer.sdp,
+        'type': offer.type,
+      });
+      print('已发送offer');
+    } catch (e) {
+      print('创建offer失败: $e');
+    }
+  }
+
+  void handleIncomingCall(Map<String, dynamic> data) {
+    print('收到来电: $data');
+    final fromUserId = data['fromUserId'] as String?;
+    final isOnlyAudio = data['isOnlyAudio'] as bool? ?? true;
+
+    if (fromUserId != null) {
+      _currentPeerId = fromUserId;
+      _isOnlyAudio = isOnlyAudio;
+      _isCaller = false;
+      _updateState(CallState.ringing);
+
+      if (_onIncomingCall != null) {
+        _onIncomingCall!(fromUserId, data['fromUserName'], isOnlyAudio);
+      }
+    }
+  }
+
+  Future<void> initiateCall(String calleeId, {bool isOnlyAudio = true}) async {
     try {
       _isCaller = true;
       _currentPeerId = calleeId;
+      _isOnlyAudio = isOnlyAudio;
+      _toUserIsReady = false;
       _updateState(CallState.calling);
 
-      // 初始化本地媒体流
+      await initializeRenderers();
       await initializeLocalStream();
+      await createPeerConnectionInternal();
 
-      // 创建PeerConnection
-      await _createPeerConnectionInternal();
-
-      // 创建offer
-      final offer = await _peerConnection!.createOffer({
-        'offerToReceiveAudio': true,
-        'offerToReceiveVideo': false,
-      });
-      await _peerConnection!.setLocalDescription(offer);
-
-      // 发送呼叫请求
-      _webSocketService.sendCallRequest(calleeId, offer);
+      final result = await _videoApi.invite(calleeId, isOnlyAudio);
+      print('invite结果: $result');
+      
+      if (result['code'] == -1) {
+        throw Exception(result['message'] ?? '用户不在线');
+      }
+      
+      print('已发送invite到 $calleeId');
 
     } catch (e) {
       print('发起呼叫失败: $e');
@@ -130,51 +330,27 @@ class CallService {
     }
   }
 
-  // 处理来电（创建answer）
-  Future<void> handleIncomingCall(String callerId, Map<String, dynamic> offerData) async {
-    try {
-      _isCaller = false;
-      _currentPeerId = callerId;
-      _updateState(CallState.ringing);
-
-      // 初始化本地媒体流
-      await initializeLocalStream();
-
-      // 创建PeerConnection
-      await _createPeerConnectionInternal();
-
-      // 设置远程描述（offer）
-      final offer = RTCSessionDescription(
-        offerData['sdp'],
-        offerData['type'],
-      );
-      await _peerConnection!.setRemoteDescription(offer);
-
-    } catch (e) {
-      print('处理来电失败: $e');
-      _updateState(CallState.error);
-      throw Exception('处理来电失败: $e');
-    }
-  }
-
-  // 接受通话
   Future<void> acceptCall() async {
     try {
-      if (_peerConnection == null || _currentPeerId == null) {
+      if (_currentPeerId == null) {
         throw Exception('没有待接听的通话');
       }
 
       _updateState(CallState.connecting);
 
-      // 创建answer
-      final answer = await _peerConnection!.createAnswer({
-        'offerToReceiveAudio': true,
-        'offerToReceiveVideo': false,
-      });
-      await _peerConnection!.setLocalDescription(answer);
+      await initializeRenderers();
+      await initializeLocalStream();
+      await createPeerConnectionInternal();
 
-      // 发送接受响应
-      _webSocketService.sendCallAccept(_currentPeerId!, answer);
+      final result = await _videoApi.accept(_currentPeerId!);
+      print('accept结果: $result');
+      
+      if (result['code'] == -1) {
+        throw Exception(result['message'] ?? '用户不在线');
+      }
+      
+      _toUserIsReady = true;
+      print('已发送accept');
 
     } catch (e) {
       print('接受通话失败: $e');
@@ -183,66 +359,41 @@ class CallService {
     }
   }
 
-  // 拒绝通话
   void rejectCall() {
     if (_currentPeerId != null) {
-      _webSocketService.sendCallReject(_currentPeerId!);
+      _videoApi.hangup(_currentPeerId!);
     }
     _cleanup();
     _updateState(CallState.rejected);
   }
 
-  // 处理对方接受通话
-  Future<void> handleCallAccepted(Map<String, dynamic> answerData) async {
-    try {
-      if (_peerConnection == null) {
-        throw Exception('PeerConnection 未初始化');
-      }
-
-      _updateState(CallState.connecting);
-
-      // 设置远程描述（answer）
-      final answer = RTCSessionDescription(
-        answerData['sdp'],
-        answerData['type'],
-      );
-      await _peerConnection!.setRemoteDescription(answer);
-
-    } catch (e) {
-      print('处理接受响应失败: $e');
-      _updateState(CallState.error);
-    }
-  }
-
-  // 处理对方拒绝通话
-  void handleCallRejected(String reason) {
+  void handleHangup() {
+    _destroyTimer();
     _cleanup();
-    _updateState(CallState.rejected);
+    _updateState(CallState.ended);
   }
 
-  // 处理ICE候选者
-  Future<void> handleIceCandidate(RTCIceCandidate candidate) async {
-    try {
-      if (_peerConnection != null) {
-        await _peerConnection!.addCandidate(candidate);
-      }
-    } catch (e) {
-      print('添加ICE候选者失败: $e');
-    }
-  }
-
-  // 结束通话
   Future<void> endCall() async {
     if (_currentPeerId != null) {
-      _webSocketService.sendCallEnd(_currentPeerId!);
+      await _videoApi.hangup(_currentPeerId!);
     }
     await _cleanup();
     _updateState(CallState.ended);
   }
 
-  // 清理资源
+  void _destroyTimer() {
+    if (_timer != null && _timer!.isActive) {
+      _timer!.cancel();
+      _timer = null;
+    }
+  }
+
   Future<void> _cleanup() async {
     try {
+      _destroyTimer();
+      _time = 0;
+      _toUserIsReady = false;
+
       if (_localStream != null) {
         for (var track in _localStream!.getTracks()) {
           await track.stop();
@@ -256,6 +407,9 @@ class CallService {
         _remoteStream = null;
       }
 
+      localRenderer.srcObject = null;
+      remoteRenderer.srcObject = null;
+
       if (_peerConnection != null) {
         await _peerConnection!.close();
         _peerConnection = null;
@@ -263,28 +417,41 @@ class CallService {
 
       _currentPeerId = null;
       _isCaller = false;
+      _renderersInitialized = false;
+      _isVideoEventInitialized = false;
     } catch (e) {
       print('清理资源失败: $e');
     }
   }
 
-  // 更新状态
+  void toggleAudio() {
+    _isAudioEnabled = !_isAudioEnabled;
+    if (_localStream != null) {
+      _localStream!.getAudioTracks().forEach((track) {
+        track.enabled = _isAudioEnabled;
+      });
+    }
+  }
+
+  void toggleVideo() {
+    _isVideoEnabled = !_isVideoEnabled;
+    if (_localStream != null) {
+      _localStream!.getVideoTracks().forEach((track) {
+        track.enabled = _isVideoEnabled;
+      });
+    }
+  }
+
   void _updateState(CallState state) {
-    _currentState = state;
-    _callStateController.add(state);
+    if (!_callStateController.isClosed) {
+      _currentState = state;
+      _callStateController.add(state);
+    }
   }
 
-  // 获取本地流
-  MediaStream? getLocalStream() {
-    return _localStream;
-  }
+  MediaStream? getLocalStream() => _localStream;
+  MediaStream? getRemoteStream() => _remoteStream;
 
-  // 获取远程流
-  MediaStream? getRemoteStream() {
-    return _remoteStream;
-  }
-
-  // 静音/取消静音
   void setMute(bool muted) {
     if (_localStream != null) {
       for (var track in _localStream!.getAudioTracks()) {
@@ -293,9 +460,29 @@ class CallService {
     }
   }
 
-  // 释放资源
   void dispose() {
-    _cleanup();
-    _callStateController.close();
+    print('CallService dispose 被调用，但不关闭单例');
   }
+
+  void reset() {
+    print('CallService 重置');
+    _subscription?.cancel();
+    _subscription = null;
+    _isVideoEventInitialized = false;
+    _cleanup();
+    if (!_callStateController.isClosed) {
+      _callStateController.close();
+    }
+  }
+}
+
+enum CallState {
+  idle,
+  calling,
+  ringing,
+  connecting,
+  connected,
+  ended,
+  rejected,
+  error,
 }

@@ -1,25 +1,21 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_base/screens/contacts_screen.dart';
 import 'package:flutter_base/services/call_service.dart';
 import 'package:flutter_base/services/websocket_service.dart';
 
-// 通话类型
 enum CallType {
-  outgoing, // 呼出
-  incoming, // 呼入
+  outgoing,
+  incoming,
 }
 
 class CallScreen extends StatefulWidget {
   final Contact contact;
   final CallType callType;
-  final Map<String, dynamic>? offerData; // 来电时的offer数据
 
   CallScreen({
     required this.contact,
     this.callType = CallType.outgoing,
-    this.offerData,
   });
 
   @override
@@ -28,12 +24,9 @@ class CallScreen extends StatefulWidget {
 
 class _CallScreenState extends State<CallScreen> {
   final _callService = CallService();
-  int _callDuration = 0;
   bool _isMuted = false;
   bool _isSpeakerOn = false;
-  Timer? _callTimer;
   String _statusText = '';
-  bool _isConnecting = false;
 
   @override
   void initState() {
@@ -42,29 +35,8 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _initializeCall() async {
-    // 更新 WebSocket 回调到当前 CallService 实例
-    final webSocketService = WebSocketService();
-    webSocketService.updateCallbacks(CallEventCallbacks(
-      onCallAccepted: (data) {
-        if (data != null) {
-          _callService.handleCallAccepted(data);
-        }
-      },
-      onCallRejected: (reason) {
-        _callService.handleCallRejected(reason);
-      },
-      onIceCandidate: (candidate) {
-        _callService.handleIceCandidate(candidate);
-      },
-      onCallEnded: () {
-        _callService.endCall();
-      },
-      onError: (error) {
-        print('通话错误: $error');
-      },
-    ));
+    _callService.videoEvent();
 
-    // 监听通话状态变化
     _callService.callStateStream.listen((state) {
       if (!mounted) return;
 
@@ -72,36 +44,26 @@ class _CallScreenState extends State<CallScreen> {
         switch (state) {
           case CallState.calling:
             _statusText = '正在呼叫...';
-            _isConnecting = true;
             break;
           case CallState.ringing:
             _statusText = '来电响铃';
-            _isConnecting = false;
             break;
           case CallState.connecting:
             _statusText = '正在连接...';
-            _isConnecting = true;
             break;
           case CallState.connected:
             _statusText = '通话中';
-            _isConnecting = false;
-            _startCallTimer();
             break;
           case CallState.ended:
             _statusText = '通话结束';
-            _stopCallTimer();
             _closeScreen();
             break;
           case CallState.rejected:
             _statusText = '对方拒绝接听';
-            _isConnecting = false;
-            _stopCallTimer();
             Future.delayed(Duration(seconds: 2), _closeScreen);
             break;
           case CallState.error:
             _statusText = '通话错误';
-            _isConnecting = false;
-            _stopCallTimer();
             Future.delayed(Duration(seconds: 2), _closeScreen);
             break;
           default:
@@ -112,16 +74,11 @@ class _CallScreenState extends State<CallScreen> {
 
     try {
       if (widget.callType == CallType.outgoing) {
-        // 发起呼叫
-        await _callService.initiateCall(widget.contact.id);
+        await _callService.initiateCall(widget.contact.id, isOnlyAudio: true);
       } else {
-        // 处理来电
-        if (widget.offerData != null) {
-          await _callService.handleIncomingCall(
-            widget.contact.id,
-            widget.offerData!,
-          );
-        }
+        setState(() {
+          _statusText = '来电响铃';
+        });
       }
     } catch (e) {
       print('初始化通话失败: $e');
@@ -132,22 +89,6 @@ class _CallScreenState extends State<CallScreen> {
         Navigator.pop(context);
       }
     }
-  }
-
-  void _startCallTimer() {
-    _callTimer?.cancel();
-    _callTimer = Timer.periodic(Duration(seconds: 1), (timer) {
-      if (mounted) {
-        setState(() {
-          _callDuration++;
-        });
-      }
-    });
-  }
-
-  void _stopCallTimer() {
-    _callTimer?.cancel();
-    _callTimer = null;
   }
 
   Future<void> _acceptCall() async {
@@ -169,7 +110,6 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _endCall() async {
-    _stopCallTimer();
     await _callService.endCall();
     Navigator.pop(context);
   }
@@ -195,7 +135,6 @@ class _CallScreenState extends State<CallScreen> {
     setState(() {
       _isSpeakerOn = !_isSpeakerOn;
     });
-    // TODO: 实现扬声器切换
   }
 
   String _formatDuration(int seconds) {
@@ -206,7 +145,6 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   void dispose() {
-    _stopCallTimer();
     _callService.dispose();
     super.dispose();
   }
@@ -232,7 +170,6 @@ class _CallScreenState extends State<CallScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               SizedBox(height: 60),
-              // 头像
               Container(
                 width: 120,
                 height: 120,
@@ -259,7 +196,6 @@ class _CallScreenState extends State<CallScreen> {
                 ),
               ),
               SizedBox(height: 30),
-              // 用户名
               Text(
                 widget.contact.username,
                 style: TextStyle(
@@ -269,27 +205,29 @@ class _CallScreenState extends State<CallScreen> {
                 ),
               ),
               SizedBox(height: 10),
-              // 状态文字
               Text(
                 _statusText,
                 style: TextStyle(fontSize: 18, color: Colors.white70),
               ),
-              // 通话时长
               if (_callService.currentState == CallState.connected)
                 Padding(
                   padding: const EdgeInsets.all(20.0),
-                  child: Text(
-                    _formatDuration(_callDuration),
-                    style: TextStyle(
-                      fontSize: 48,
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
+                  child: StreamBuilder<int>(
+                    stream: _callService.timeStream,
+                    builder: (context, snapshot) {
+                      return Text(
+                        _formatDuration(snapshot.data ?? 0),
+                        style: TextStyle(
+                          fontSize: 48,
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      );
+                    },
                   ),
                 ),
-              // 连接动画
-              if (_isConnecting)
+              if (_callService.currentState == CallState.calling ||
+                  _callService.currentState == CallState.connecting)
                 Padding(
                   padding: const EdgeInsets.all(30.0),
                   child: CircularProgressIndicator(
@@ -298,12 +236,9 @@ class _CallScreenState extends State<CallScreen> {
                   ),
                 ),
               Spacer(),
-              // 按钮区域
               if (isIncoming && isRinging)
-                // 来电接听/拒绝按钮
                 _buildIncomingCallButtons()
               else
-                // 通话中按钮
                 _buildActiveCallButtons(),
               SizedBox(height: 60),
             ],
@@ -313,12 +248,10 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
-  // 来电时的接听/拒绝按钮
   Widget _buildIncomingCallButtons() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // 拒绝按钮
         Column(
           children: [
             GestureDetector(
@@ -337,25 +270,14 @@ class _CallScreenState extends State<CallScreen> {
                     ),
                   ],
                 ),
-                child: Icon(
-                  Icons.call_end,
-                  size: 40,
-                  color: Colors.white,
-                ),
+                child: Icon(Icons.call_end, size: 40, color: Colors.white),
               ),
             ),
             SizedBox(height: 12),
-            Text(
-              '拒绝',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-              ),
-            ),
+            Text('拒绝', style: TextStyle(color: Colors.white, fontSize: 16)),
           ],
         ),
         SizedBox(width: 80),
-        // 接听按钮
         Column(
           children: [
             GestureDetector(
@@ -374,33 +296,21 @@ class _CallScreenState extends State<CallScreen> {
                     ),
                   ],
                 ),
-                child: Icon(
-                  Icons.call,
-                  size: 40,
-                  color: Colors.white,
-                ),
+                child: Icon(Icons.call, size: 40, color: Colors.white),
               ),
             ),
             SizedBox(height: 12),
-            Text(
-              '接听',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-              ),
-            ),
+            Text('接听', style: TextStyle(color: Colors.white, fontSize: 16)),
           ],
         ),
       ],
     );
   }
 
-  // 通话中的按钮（静音、挂断、扬声器）
   Widget _buildActiveCallButtons() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        // 静音按钮
         Column(
           children: [
             GestureDetector(
@@ -428,15 +338,11 @@ class _CallScreenState extends State<CallScreen> {
             SizedBox(height: 8),
             Text(
               _isMuted ? '静音中' : '静音',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-              ),
+              style: TextStyle(color: Colors.white70, fontSize: 12),
             ),
           ],
         ),
         SizedBox(width: 40),
-        // 挂断按钮
         Column(
           children: [
             GestureDetector(
@@ -455,25 +361,14 @@ class _CallScreenState extends State<CallScreen> {
                     ),
                   ],
                 ),
-                child: Icon(
-                  Icons.call_end,
-                  size: 40,
-                  color: Colors.white,
-                ),
+                child: Icon(Icons.call_end, size: 40, color: Colors.white),
               ),
             ),
             SizedBox(height: 8),
-            Text(
-              '挂断',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-              ),
-            ),
+            Text('挂断', style: TextStyle(color: Colors.white70, fontSize: 12)),
           ],
         ),
         SizedBox(width: 40),
-        // 扬声器按钮
         Column(
           children: [
             GestureDetector(
@@ -501,10 +396,7 @@ class _CallScreenState extends State<CallScreen> {
             SizedBox(height: 8),
             Text(
               _isSpeakerOn ? '扬声器' : '听筒',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 12,
-              ),
+              style: TextStyle(color: Colors.white70, fontSize: 12),
             ),
           ],
         ),

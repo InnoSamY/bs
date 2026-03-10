@@ -8,7 +8,7 @@ buildscript {
         maven { url = uri("https://maven.aliyun.com/repository/releases") }
         maven { url = uri("https://jitpack.io") }
 
-        println("✅ buildscript 仓库配置完成")
+        println("buildscript 仓库配置完成")
     }
     dependencies {
         // 指定 Android Gradle 插件版本，与 settings.gradle.kts 保持一致
@@ -33,7 +33,7 @@ allprojects {
         // google()
         // mavenCentral()
 
-        println("✅ 项目 ${project.name} 的 allprojects 仓库配置完成")
+        println("项目 ${project.name} 的 allprojects 仓库配置完成")
     }
 }
 
@@ -57,7 +57,7 @@ subprojects {
                 maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
                 maven { url = uri("https://jitpack.io") }
 
-                println("🔧 已为子项目 ${project.name} 强制配置阿里云镜像")
+                println("已为子项目 ${project.name} 强制配置阿里云镜像")
             }
         }
     }

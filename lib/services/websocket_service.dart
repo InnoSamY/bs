@@ -1,37 +1,5 @@
 import 'dart:async';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
-
-// 通话状态枚举
-enum CallState {
-  idle,           // 空闲
-  calling,        // 正在呼叫
-  ringing,        // 正在响铃（被叫方）
-  connecting,     // 连接中
-  connected,      // 已连接
-  ended,          // 已结束
-  rejected,       // 被拒绝
-  error,          // 错误
-}
-
-// 通话事件回调
-class CallEventCallbacks {
-  final Function(Map<String, dynamic>)? onIncomingCall;
-  final Function(dynamic)? onCallAccepted;
-  final Function(String)? onCallRejected;
-  final Function(RTCIceCandidate)? onIceCandidate;
-  final Function()? onCallEnded;
-  final Function(String)? onError;
-
-  CallEventCallbacks({
-    this.onIncomingCall,
-    this.onCallAccepted,
-    this.onCallRejected,
-    this.onIceCandidate,
-    this.onCallEnded,
-    this.onError,
-  });
-}
 
 class WebSocketService {
   static final WebSocketService _instance = WebSocketService._internal();
@@ -40,176 +8,144 @@ class WebSocketService {
 
   io.Socket? _socket;
   String? _currentUserId;
-  CallEventCallbacks? _callbacks;
+  Timer? _heartbeatTimer;
+  Timer? _reconnectTimer;
+  bool _isConnecting = false;
 
-  // 服务器地址
   final String _serverUrl = 'http://123.56.168.149:3000';
 
-  // 连接状态
   bool get isConnected => _socket?.connected ?? false;
 
-  // 初始化连接
-  Future<void> connect(String userId, {CallEventCallbacks? callbacks}) async {
+  static final eventController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get eventStream => eventController.stream;
+
+  Future<void> connect(String userId) async {
     _currentUserId = userId;
-    _callbacks = callbacks;
+
+    if (_isConnecting) {
+      print('WebSocket 正在连接中...');
+      return;
+    }
 
     if (_socket != null && _socket!.connected) {
       print('WebSocket 已连接');
+      _socket!.emit('register', userId);
       return;
     }
 
     try {
+      _isConnecting = true;
+      print('WebSocket connecting...');
+      
       _socket = io.io(_serverUrl, <String, dynamic>{
-        'transports': ['websocket'],
+        'transports': ['websocket', 'polling'],
         'autoConnect': true,
+        'reconnect': true,
+        'reconnectAttempts': 10,
+        'reconnectDelay': 1000,
+        'reconnectDelayMax': 5000,
       });
 
       _socket!.onConnect((_) {
         print('WebSocket 连接成功');
-        // 注册用户
+        _isConnecting = false;
         _socket!.emit('register', userId);
+        _startHeartbeat();
       });
 
       _socket!.onDisconnect((_) {
         print('WebSocket 断开连接');
+        _isConnecting = false;
+        _stopHeartbeat();
       });
 
       _socket!.onConnectError((error) {
         print('WebSocket 连接错误: $error');
-        _callbacks?.onError?.call('连接服务器失败');
+        _isConnecting = false;
       });
 
-      // 监听来电
+      _socket!.onError((error) {
+        print('WebSocket错误: $error');
+      });
+
+      _socket!.on('video', (data) {
+        print('收到视频信令: $data');
+        eventController.add({'type': 'on-receive-video', 'content': data});
+      });
+
       _socket!.on('incoming-call', (data) {
         print('收到来电: $data');
-        _callbacks?.onIncomingCall?.call(data);
+        eventController.add({'type': 'on-receive-video', 'content': {
+          'type': 'invite',
+          'fromUserId': data['callerId'],
+          'callType': data['callType'],
+        }});
       });
 
-      // 监听对方接受通话
       _socket!.on('call-accepted', (data) {
-        print('对方接受通话: $data');
-        _callbacks?.onCallAccepted?.call(data);
+        print('通话被接受: $data');
+        eventController.add({'type': 'on-receive-video', 'content': {
+          'type': 'accept',
+          'answer': data['answer'],
+        }});
       });
 
-      // 监听对方拒绝通话
       _socket!.on('call-rejected', (data) {
-        print('对方拒绝通话: $data');
-        final reason = data['reason'] ?? '用户拒绝接听';
-        _callbacks?.onCallRejected?.call(reason);
+        print('通话被拒绝: $data');
+        eventController.add({'type': 'on-receive-video', 'content': {
+          'type': 'hangup',
+          'reason': data['reason'],
+        }});
       });
 
-      // 监听ICE候选者
+      _socket!.on('call-ended', (data) {
+        print('通话结束: $data');
+        eventController.add({'type': 'on-receive-video', 'content': {
+          'type': 'hangup',
+        }});
+      });
+
       _socket!.on('ice-candidate', (data) {
-        print('收到ICE候选者');
-        final candidateData = data['candidate'];
-        if (candidateData != null) {
-          final candidate = RTCIceCandidate(
-            candidateData['candidate'],
-            candidateData['sdpMid'],
-            candidateData['sdpMLineIndex'],
-          );
-          _callbacks?.onIceCandidate?.call(candidate);
-        }
-      });
-
-      // 监听通话结束
-      _socket!.on('call-ended', (_) {
-        print('通话结束');
-        _callbacks?.onCallEnded?.call();
-      });
-
-      // 监听错误
-      _socket!.on('call-error', (data) {
-        print('通话错误: $data');
-        _callbacks?.onError?.call(data['message'] ?? '通话错误');
+        print('收到ICE候选者: $data');
+        eventController.add({'type': 'on-receive-video', 'content': {
+          'type': 'candidate',
+          'candidate': data['candidate'],
+        }});
       });
 
     } catch (e) {
       print('WebSocket 初始化错误: $e');
+      _isConnecting = false;
       throw Exception('WebSocket 连接失败: $e');
     }
   }
 
-  // 发起通话请求
-  void sendCallRequest(String calleeId, RTCSessionDescription offer) {
-    if (_socket == null || !_socket!.connected) {
-      throw Exception('WebSocket 未连接');
-    }
-
-    _socket!.emit('call-request', {
-      'callerId': _currentUserId,
-      'calleeId': calleeId,
-      'offer': {
-        'sdp': offer.sdp,
-        'type': offer.type,
-      },
-      'callType': 'audio',
+  void _startHeartbeat() {
+    _stopHeartbeat();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_socket != null && _socket!.connected) {
+        _socket!.emit('ping', {'userId': _currentUserId});
+      }
     });
   }
 
-  // 接受通话
-  void sendCallAccept(String callerId, RTCSessionDescription answer) {
-    if (_socket == null || !_socket!.connected) {
-      throw Exception('WebSocket 未连接');
-    }
-
-    _socket!.emit('call-accept', {
-      'callerId': callerId,
-      'answer': {
-        'sdp': answer.sdp,
-        'type': answer.type,
-      },
-    });
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
   }
 
-  // 拒绝通话
-  void sendCallReject(String callerId) {
-    if (_socket == null || !_socket!.connected) {
-      throw Exception('WebSocket 未连接');
-    }
-
-    _socket!.emit('call-reject', {
-      'callerId': callerId,
-    });
-  }
-
-  // 结束通话
-  void sendCallEnd(String targetId) {
-    if (_socket == null || !_socket!.connected) {
-      throw Exception('WebSocket 未连接');
-    }
-
-    _socket!.emit('call-end', {
-      'targetId': targetId,
-    });
-  }
-
-  // 发送ICE候选者
-  void sendIceCandidate(String targetId, RTCIceCandidate candidate) {
-    if (_socket == null || !_socket!.connected) {
-      throw Exception('WebSocket 未连接');
-    }
-
-    _socket!.emit('ice-candidate', {
-      'targetId': targetId,
-      'candidate': {
-        'candidate': candidate.candidate,
-        'sdpMid': candidate.sdpMid,
-        'sdpMLineIndex': candidate.sdpMLineIndex,
-      },
-    });
-  }
-
-  // 断开连接
   void disconnect() {
+    _stopHeartbeat();
     _socket?.disconnect();
     _socket = null;
     _currentUserId = null;
-    _callbacks = null;
+    _isConnecting = false;
   }
 
-  // 更新回调
-  void updateCallbacks(CallEventCallbacks callbacks) {
-    _callbacks = callbacks;
+  void dispose() {
+    disconnect();
+    if (!eventController.isClosed) {
+      eventController.close();
+    }
   }
 }

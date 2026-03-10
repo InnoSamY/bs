@@ -56,12 +56,14 @@ dependencies:
   # 加密功能
   crypto: ^3.0.3
   
-  # 权限处理
-  permission_handler: ^11.3.1
+  # 加密库（用于实现安全的加密算法）
+  pointycastle: ^4.0.0
+  
+  # 后量子密码学库（ML-KEM/Kyber 和 ML-DSA/Dilithium）
   pqcrypto: ^0.1.0
   
-  # 后量子密码（后续集成）
-  # pqcrypto: ^0.1.0
+  # 权限处理
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:

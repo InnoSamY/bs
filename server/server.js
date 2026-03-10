@@ -10,6 +10,8 @@ require('dotenv').config();
 const authRoutes = require('./routes/auth');
 const contactRoutes = require('./routes/contacts');
 const callRoutes = require('./routes/calls');
+const videoRoutes = require('./routes/video');
+const userSockets = require('./routes/video-sockets');
 
 const app = express();
 const server = http.createServer(app);
@@ -20,34 +22,30 @@ const io = new Server(server, {
   }
 });
 
-// 安全中间件
+app.set('io', io);
+
 app.use(helmet({
   contentSecurityPolicy: false,
 }));
 
-// 速率限制
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15分钟
-  max: 100, // 限制每个IP 100个请求
+  windowMs: 15 * 60 * 1000,
+  max: 1000,
   message: '请求过于频繁，请稍后再试'
 });
 app.use(limiter);
 
-// CORS配置
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// 解析JSON请求体
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 静态文件服务（用于头像）
 app.use('/uploads', express.static('uploads'));
 
-// MongoDB连接
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/secure_voice';
 
 mongoose.connect(MONGODB_URI, {
@@ -62,12 +60,11 @@ mongoose.connect(MONGODB_URI, {
   process.exit(1);
 });
 
-// API路由
 app.use('/api/auth', authRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/calls', callRoutes);
+app.use('/api/video', videoRoutes);
 
-// 健康检查端点
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -76,20 +73,16 @@ app.get('/health', (req, res) => {
   });
 });
 
-// WebRTC信令服务
 const activeCalls = new Map();
-const userSockets = new Map();
 
 io.on('connection', (socket) => {
   console.log('用户连接:', socket.id);
 
-  // 用户注册
   socket.on('register', (userId) => {
     userSockets.set(userId, socket.id);
     console.log(`用户 ${userId} 已注册，socket ID: ${socket.id}`);
   });
 
-  // 发起通话请求
   socket.on('call-request', (data) => {
     const { callerId, calleeId, offer, callType } = data;
     const calleeSocketId = userSockets.get(calleeId);
@@ -107,7 +100,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 接受通话
   socket.on('call-accept', (data) => {
     const { callerId, answer } = data;
     const callerSocketId = userSockets.get(callerId);
@@ -121,7 +113,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 拒绝通话
   socket.on('call-reject', (data) => {
     const { callerId } = data;
     const callerSocketId = userSockets.get(callerId);
@@ -132,7 +123,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 挂断通话
   socket.on('call-end', (data) => {
     const { targetId } = data;
     const targetSocketId = userSockets.get(targetId);
@@ -141,7 +131,6 @@ io.on('connection', (socket) => {
       io.to(targetSocketId).emit('call-ended');
     }
     
-    // 清理通话记录
     for (const [key, value] of activeCalls.entries()) {
       if (value.callerId === targetId || value.calleeId === targetId) {
         activeCalls.delete(key);
@@ -149,7 +138,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ICE候选者交换
   socket.on('ice-candidate', (data) => {
     const { targetId, candidate } = data;
     const targetSocketId = userSockets.get(targetId);
@@ -159,24 +147,21 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 断开连接
   socket.on('disconnect', () => {
     console.log('用户断开连接:', socket.id);
     
-    // 从用户映射中移除
     for (const [userId, socketId] of userSockets.entries()) {
       if (socketId === socket.id) {
         userSockets.delete(userId);
+        console.log(`用户 ${userId} 已注销`);
         break;
       }
     }
     
-    // 清理相关通话
     activeCalls.delete(socket.id);
   });
 });
 
-// 错误处理中间件
 app.use((err, req, res, next) => {
   console.error('服务器错误:', err);
   res.status(500).json({ 
@@ -186,12 +171,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 404处理
 app.use((req, res) => {
   res.status(404).json({ success: false, message: '接口不存在' });
 });
 
-// 启动服务器
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
@@ -201,7 +184,6 @@ server.listen(PORT, HOST, () => {
   console.log(`🔌 WebSocket服务已启动`);
 });
 
-// 优雅关闭
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');
   server.close(() => {

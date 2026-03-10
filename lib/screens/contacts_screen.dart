@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_base/services/auth_service.dart';
 import 'package:flutter_base/services/contact_service.dart';
 import 'package:flutter_base/services/websocket_service.dart';
@@ -66,17 +65,9 @@ class _ContactsScreenState extends State<ContactsScreen> {
     if (_currentUserId == null) return;
 
     try {
-      await _webSocketService.connect(
-        _currentUserId!,
-        callbacks: CallEventCallbacks(
-          onIncomingCall: _handleIncomingCall,
-          onCallAccepted: _handleCallAccepted,
-          onCallRejected: _handleCallRejected,
-          onIceCandidate: _handleIceCandidate,
-          onCallEnded: _handleCallEnded,
-          onError: _handleCallError,
-        ),
-      );
+      await _webSocketService.connect(_currentUserId!);
+      _callService.videoEvent();
+      _callService.setOnIncomingCall(_handleIncomingCall);
       print('WebSocket 连接成功');
     } catch (e) {
       print('WebSocket 连接失败: $e');
@@ -88,70 +79,28 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  // 处理来电
-  void _handleIncomingCall(Map<String, dynamic> data) async {
-    final callerId = data['callerId'] as String?;
-    final offer = data['offer'] as Map<String, dynamic>?;
+  void _handleIncomingCall(String callerId, String? callerName, bool isOnlyAudio) {
+    print('处理来电: callerId=$callerId, callerName=$callerName');
 
-    if (callerId == null || offer == null) return;
-
-    // 查找联系人信息
     final contact = _contacts.firstWhere(
       (c) => c.id == callerId,
       orElse: () => Contact(
         id: callerId,
-        username: '未知用户',
+        username: callerName ?? '未知用户',
         avatar: '',
         bio: '',
       ),
     );
 
     if (mounted) {
-      // 显示来电界面
       Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) => CallScreen(
             contact: contact,
             callType: CallType.incoming,
-            offerData: offer,
           ),
         ),
-      );
-    }
-  }
-
-  // 处理对方接受通话
-  void _handleCallAccepted(dynamic data) {
-    // 由 CallScreen 处理
-    print('对方接受通话: $data');
-  }
-
-  // 处理对方拒绝通话
-  void _handleCallRejected(String reason) {
-    _callService.handleCallRejected(reason);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('对方拒绝接听: $reason')),
-      );
-    }
-  }
-
-  // 处理ICE候选者
-  void _handleIceCandidate(RTCIceCandidate candidate) {
-    _callService.handleIceCandidate(candidate);
-  }
-
-  // 处理通话结束
-  void _handleCallEnded() {
-    print('通话结束');
-  }
-
-  // 处理通话错误
-  void _handleCallError(String error) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('通话错误: $error')),
       );
     }
   }
@@ -162,10 +111,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
     });
 
     try {
-      // 获取当前用户
       final user = await _authService.getCurrentUser();
       if (user != null) {
-        // 调用API获取联系人列表
         _contacts = await _contactService.getContacts();
       }
     } catch (error) {
@@ -212,7 +159,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
             onPressed: () async {
               Navigator.pop(context);
               try {
-                // 调用API删除联系人
                 final user = await _authService.getCurrentUser();
                 if (user != null) {
                   await _contactService.deleteContact(
@@ -236,7 +182,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
     );
   }
 
-  void _showMyId() {
+  void _showMyID() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -292,7 +238,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
         title: Text('联系人'),
         backgroundColor: Colors.blue[600],
         actions: [
-          // 连接状态指示器
           Container(
             margin: EdgeInsets.only(right: 8),
             child: Center(
@@ -318,7 +263,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
           ),
           IconButton(
             icon: Icon(Icons.person, color: Colors.white),
-            onPressed: _showMyId,
+            onPressed: _showMyID,
             tooltip: '我的ID',
           ),
           IconButton(
