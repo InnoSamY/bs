@@ -51,6 +51,10 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/secure
 mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+  maxPoolSize: 10,
+  minPoolSize: 2
 })
 .then(() => {
   console.log('✅ MongoDB连接成功');
@@ -79,71 +83,88 @@ io.on('connection', (socket) => {
   console.log('用户连接:', socket.id);
 
   socket.on('register', (userId) => {
-    userSockets.set(userId, socket.id);
-    console.log(`用户 ${userId} 已注册，socket ID: ${socket.id}`);
+    if (userId && typeof userId === 'string') {
+      userSockets.set(userId, socket.id);
+      console.log(`用户 ${userId} 已注册，socket ID: ${socket.id}`);
+    } else {
+      console.warn('无效的用户ID注册:', userId);
+    }
   });
 
   socket.on('call-request', (data) => {
     const { callerId, calleeId, offer, callType } = data;
-    const calleeSocketId = userSockets.get(calleeId);
-    
-    if (calleeSocketId) {
-      io.to(calleeSocketId).emit('incoming-call', {
-        callerId,
-        offer,
-        callType,
-        callId: socket.id
-      });
-      activeCalls.set(socket.id, { callerId, calleeId, status: 'calling' });
+    if (calleeId && typeof calleeId === 'string') {
+      const calleeSocketId = userSockets.get(calleeId);
+      
+      if (calleeSocketId) {
+        io.to(calleeSocketId).emit('incoming-call', {
+          callerId,
+          offer,
+          callType,
+          callId: socket.id
+        });
+        activeCalls.set(socket.id, { callerId, calleeId, status: 'calling' });
+      } else {
+        socket.emit('call-error', { message: '用户不在线' });
+      }
     } else {
-      socket.emit('call-error', { message: '用户不在线' });
+      console.warn('无效的calleeId:', calleeId);
+      socket.emit('call-error', { message: '无效的用户ID' });
     }
   });
 
   socket.on('call-accept', (data) => {
     const { callerId, answer } = data;
-    const callerSocketId = userSockets.get(callerId);
-    
-    if (callerSocketId) {
-      io.to(callerSocketId).emit('call-accepted', { answer });
-      const call = activeCalls.get(callerSocketId);
-      if (call) {
-        call.status = 'connected';
+    if (callerId && typeof callerId === 'string') {
+      const callerSocketId = userSockets.get(callerId);
+      
+      if (callerSocketId) {
+        io.to(callerSocketId).emit('call-accepted', { answer });
+        const call = activeCalls.get(callerSocketId);
+        if (call) {
+          call.status = 'connected';
+        }
       }
     }
   });
 
   socket.on('call-reject', (data) => {
     const { callerId } = data;
-    const callerSocketId = userSockets.get(callerId);
-    
-    if (callerSocketId) {
-      io.to(callerSocketId).emit('call-rejected', { reason: '用户拒绝接听' });
-      activeCalls.delete(callerSocketId);
+    if (callerId && typeof callerId === 'string') {
+      const callerSocketId = userSockets.get(callerId);
+      
+      if (callerSocketId) {
+        io.to(callerSocketId).emit('call-rejected', { reason: '用户拒绝接听' });
+        activeCalls.delete(callerSocketId);
+      }
     }
   });
 
   socket.on('call-end', (data) => {
     const { targetId } = data;
-    const targetSocketId = userSockets.get(targetId);
-    
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('call-ended');
-    }
-    
-    for (const [key, value] of activeCalls.entries()) {
-      if (value.callerId === targetId || value.calleeId === targetId) {
-        activeCalls.delete(key);
+    if (targetId && typeof targetId === 'string') {
+      const targetSocketId = userSockets.get(targetId);
+      
+      if (targetSocketId) {
+        io.to(targetSocketId).emit('call-ended');
+      }
+      
+      for (const [key, value] of activeCalls.entries()) {
+        if (value.callerId === targetId || value.calleeId === targetId) {
+          activeCalls.delete(key);
+        }
       }
     }
   });
 
   socket.on('ice-candidate', (data) => {
     const { targetId, candidate } = data;
-    const targetSocketId = userSockets.get(targetId);
-    
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('ice-candidate', { candidate });
+    if (targetId && typeof targetId === 'string') {
+      const targetSocketId = userSockets.get(targetId);
+      
+      if (targetSocketId) {
+        io.to(targetSocketId).emit('ice-candidate', { candidate });
+      }
     }
   });
 

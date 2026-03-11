@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:convert/convert.dart';
 import 'package:pqcrypto/pqcrypto.dart';
 import 'package:pointycastle/export.dart';
+import 'ml_dsa.dart';
 
 class CryptoService {
   // ML-KEM (Kyber) 实例 - 用于密钥封装机制
@@ -116,108 +117,58 @@ class CryptoService {
     }
   }
 
-  // 生成签名密钥对（使用 ECDSA 作为临时方案）
-  // 注意：pqcrypto 库目前不包含 ML-DSA (Dilithium)
+  // 生成签名密钥对（使用 ML-DSA 后量子算法）
   Map<String, String> generateSignatureKeyPair() {
     try {
-      print('开始生成 ECDSA 签名密钥对...');
-      print('注意：pqcrypto 库暂不支持 ML-DSA，使用 ECDSA 作为替代');
+      print('开始生成 ML-DSA-2 (Dilithium2) 签名密钥对...');
       
-      final keyParams = ECKeyGeneratorParameters(ECCurve_secp256r1());
-      final random = SecureRandom('Fortuna')..seed(KeyParameter(_generateRandomSeed()));
-      final keyGenerator = KeyGenerator('EC');
-      keyGenerator.init(ParametersWithRandom(keyParams, random));
-      final keyPair = keyGenerator.generateKeyPair();
+      // 使用 ML-DSA 生成密钥对
+      final keyPair = MlDsa.generateKeyPair(level: 2);
+      
+      print('ML-DSA-2 签名密钥对生成成功');
+      print('公钥长度: ${base64Decode(keyPair['publicKey']!).length} 字节');
+      print('私钥长度: ${base64Decode(keyPair['privateKey']!).length} 字节');
 
-      final privateKey = keyPair.privateKey as ECPrivateKey;
-      final publicKey = keyPair.publicKey as ECPublicKey;
-
-      final privateKeyBytes = privateKey.d!.toRadixString(16).padLeft(64, '0');
-      final publicKeyBytes = _encodePublicKey(publicKey);
-
-      print('ECDSA 签名密钥对生成成功');
-      print('公钥长度: ${publicKeyBytes.length} 字节');
-      print('私钥长度: ${privateKeyBytes.length} 字节');
-
-      return {
-        'publicKey': base64Encode(publicKeyBytes),
-        'privateKey': base64Encode(hex.decode(privateKeyBytes)),
-      };
+      return keyPair;
     } catch (e) {
-      print('ECDSA 签名密钥对生成失败: $e');
+      print('ML-DSA 签名密钥对生成失败: $e');
       // 如果失败，回退到传统算法
       return _generateFallbackSignatureKeyPair();
     }
   }
 
-  // 数字签名（使用 ECDSA）
-  // 注意：pqcrypto 库目前不包含 ML-DSA (Dilithium)
+  // 数字签名（使用 ML-DSA 后量子算法）
   String sign(String message, String privateKey) {
     try {
-      print('开始 ECDSA 数字签名...');
-      print('注意：pqcrypto 库暂不支持 ML-DSA，使用 ECDSA 作为替代');
+      print('开始 ML-DSA 数字签名...');
       
-      // 解码私钥
-      final privateKeyBytes = base64Decode(privateKey);
-      final d = BigInt.parse(hex.encode(privateKeyBytes), radix: 16);
-      final ecPrivateKey = ECPrivateKey(d, ECCurve_secp256r1());
+      // 使用 ML-DSA 进行签名
+      final signature = MlDsa.sign(message, privateKey);
       
-      // 计算消息的 SHA-256 哈希
-      final messageBytes = utf8.encode(message);
-      final digest = sha256.convert(messageBytes).bytes;
-      
-      // 使用 ECDSA 进行签名
-      final signer = Signer('SHA-256/ECDSA');
-      signer.init(true, PrivateKeyParameter(ecPrivateKey));
-      final signature = signer.generateSignature(Uint8List.fromList(digest));
-      
-      // 将签名转换为格式
-      final ecsSignature = signature as ECSignature;
-      final signatureBytes = _encodeSignature(ecsSignature);
-      
-      final signatureBase64 = base64Encode(signatureBytes);
+      print('ML-DSA 数字签名成功');
+      print('签名长度: ${base64Decode(signature).length} 字节');
 
-      print('ECDSA 数字签名成功');
-      print('签名长度: ${signatureBytes.length} 字节');
-
-      return signatureBase64;
+      return signature;
     } catch (e) {
-      print('ECDSA 数字签名失败: $e');
+      print('ML-DSA 数字签名失败: $e');
       // 如果失败，回退到传统算法
       return _fallbackSign(message, privateKey);
     }
   }
 
-  // 验证签名（使用 ECDSA）
-  // 注意：pqcrypto 库目前不包含 ML-DSA (Dilithium)
+  // 验证签名（使用 ML-DSA 后量子算法）
   bool verify(String message, String signature, String publicKey) {
     try {
-      print('开始 ECDSA 签名验证...');
-      print('注意：pqcrypto 库暂不支持 ML-DSA，使用 ECDSA 作为替代');
+      print('开始 ML-DSA 签名验证...');
       
-      // 解码公钥和签名
-      final publicKeyBytes = base64Decode(publicKey);
-      final ecPublicKey = _decodePublicKey(publicKeyBytes);
-      final signatureBytes = base64Decode(signature);
-      final ecsSignature = _decodeSignature(signatureBytes);
-      
-      // 计算消息的 SHA-256 哈希
-      final messageBytes = utf8.encode(message);
-      final digest = sha256.convert(messageBytes).bytes;
-      
-      // 使用 ECDSA 验证签名
-      final verifier = Signer('SHA-256/ECDSA');
-      verifier.init(false, PublicKeyParameter(ecPublicKey));
-      final isValid = verifier.verifySignature(
-        Uint8List.fromList(digest),
-        ecsSignature,
-      );
+      // 使用 ML-DSA 验证签名
+      final isValid = MlDsa.verify(message, signature, publicKey);
 
-      print('ECDSA 签名验证${isValid ? "成功" : "失败"}');
+      print('ML-DSA 签名验证${isValid ? "成功" : "失败"}');
 
       return isValid;
     } catch (e) {
-      print('ECDSA 签名验证失败: $e');
+      print('ML-DSA 签名验证失败: $e');
       // 如果失败，回退到传统算法
       return _fallbackVerify(message, signature, publicKey);
     }

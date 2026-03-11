@@ -11,6 +11,10 @@ class WebSocketService {
   Timer? _heartbeatTimer;
   Timer? _reconnectTimer;
   bool _isConnecting = false;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 10;
+  static const Duration _initialReconnectDelay = Duration(seconds: 1);
+  static const Duration _maxReconnectDelay = Duration(seconds: 10);
 
   final String _serverUrl = 'http://123.56.168.149:3000';
 
@@ -41,14 +45,20 @@ class WebSocketService {
         'transports': ['websocket', 'polling'],
         'autoConnect': true,
         'reconnect': true,
-        'reconnectAttempts': 10,
+        'reconnectAttempts': 20,
         'reconnectDelay': 1000,
-        'reconnectDelayMax': 5000,
+        'reconnectDelayMax': 10000,
+        'timeout': 20000,
+        'pingTimeout': 30000,
+        'pingInterval': 25000,
+        'upgrade': true,
+        'rememberUpgrade': true,
       });
 
       _socket!.onConnect((_) {
         print('WebSocket 连接成功');
         _isConnecting = false;
+        _reconnectAttempts = 0;
         _socket!.emit('register', userId);
         _startHeartbeat();
       });
@@ -57,11 +67,13 @@ class WebSocketService {
         print('WebSocket 断开连接');
         _isConnecting = false;
         _stopHeartbeat();
+        _attemptReconnect();
       });
 
       _socket!.onConnectError((error) {
         print('WebSocket 连接错误: $error');
         _isConnecting = false;
+        _attemptReconnect();
       });
 
       _socket!.onError((error) {
@@ -134,12 +146,43 @@ class WebSocketService {
     _heartbeatTimer = null;
   }
 
+  void _attemptReconnect() {
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      print('WebSocket 重连次数已达上限');
+      return;
+    }
+
+    _reconnectAttempts++;
+    final delay = _calculateReconnectDelay();
+    print('WebSocket 尝试重连第 $_reconnectAttempts 次，延迟 ${delay.inSeconds} 秒');
+
+    _reconnectTimer = Timer(delay, () {
+      if (_currentUserId != null) {
+        connect(_currentUserId!);
+      }
+    });
+  }
+
+  Duration _calculateReconnectDelay() {
+    final delay = Duration(
+      milliseconds: (_initialReconnectDelay.inMilliseconds * 
+                     (1 << _reconnectAttempts)).clamp(
+                       _initialReconnectDelay.inMilliseconds, 
+                       _maxReconnectDelay.inMilliseconds
+                     )
+    );
+    return delay;
+  }
+
   void disconnect() {
     _stopHeartbeat();
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _socket?.disconnect();
     _socket = null;
     _currentUserId = null;
     _isConnecting = false;
+    _reconnectAttempts = 0;
   }
 
   void dispose() {

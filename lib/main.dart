@@ -6,7 +6,8 @@ import 'package:flutter_base/screens/add_contact_screen.dart';
 import 'package:flutter_base/screens/call_screen.dart';
 import 'package:flutter_base/services/auth_service.dart';
 
-void main(List<String> args) {
+void main(List<String> args) async {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(MyApp());
 }
 

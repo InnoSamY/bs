@@ -317,38 +317,16 @@ class _ContactsScreenState extends State<ContactsScreen> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: ListTile(
-                            leading: Stack(
-                              children: [
-                                CircleAvatar(
-                                  radius: 30,
-                                  backgroundColor: Colors.blue[100],
-                                  child: Text(
-                                    contact.username[0],
-                                    style: TextStyle(
-                                      fontSize: 18,
-                                      color: Colors.blue,
-                                    ),
-                                  ),
+                            leading: CircleAvatar(
+                              radius: 30,
+                              backgroundColor: Colors.blue[100],
+                              child: Text(
+                                contact.username[0],
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  color: Colors.blue,
                                 ),
-                                Positioned(
-                                  bottom: 0,
-                                  right: 0,
-                                  child: Container(
-                                    width: 12,
-                                    height: 12,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: contact.isOnline
-                                          ? Colors.green
-                                          : Colors.grey,
-                                      border: Border.all(
-                                        color: Colors.white,
-                                        width: 2,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                             title: Text(
                               contact.username,

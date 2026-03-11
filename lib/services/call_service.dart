@@ -55,6 +55,11 @@ class CallService {
   StreamSubscription? _subscription;
   bool _isVideoEventInitialized = false;
 
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 3;
+  static const Duration _reconnectDelay = Duration(seconds: 2);
+
   IncomingCallCallback? _onIncomingCall;
 
   void setOnIncomingCall(IncomingCallCallback callback) {
@@ -151,14 +156,18 @@ class CallService {
     print('ICE连接状态: $state');
     if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
       _toUserIsReady = true;
+      _reconnectAttempts = 0;
+      _destroyReconnectTimer();
       _destroyTimer();
       _timer = Timer.periodic(const Duration(seconds: 1), (Timer t) {
         _time++;
         _timeController.add(_time);
       });
       _updateState(CallState.connected);
-    } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
-        state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+    } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+      print('ICE连接断开，尝试重连...');
+      _attemptReconnect();
+    } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
         state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
       handleHangup();
     }
@@ -367,7 +376,58 @@ class CallService {
     _updateState(CallState.rejected);
   }
 
+  void _destroyReconnectTimer() {
+    if (_reconnectTimer != null && _reconnectTimer!.isActive) {
+      _reconnectTimer!.cancel();
+      _reconnectTimer = null;
+    }
+  }
+
+  void _attemptReconnect() {
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      print('重连次数已达上限，结束通话');
+      handleHangup();
+      return;
+    }
+
+    _reconnectAttempts++;
+    print('尝试重连第 $_reconnectAttempts 次');
+
+    _reconnectTimer = Timer(_reconnectDelay, () {
+      _reconnect();
+    });
+  }
+
+  Future<void> _reconnect() async {
+    try {
+      print('开始重连...');
+      
+      if (_peerConnection != null) {
+        await _peerConnection!.close();
+        _peerConnection = null;
+      }
+
+      await createPeerConnectionInternal();
+
+      if (_isCaller) {
+        await onOffer();
+      } else {
+        await onOffer();
+      }
+
+      print('重连尝试完成');
+    } catch (e) {
+      print('重连失败: $e');
+      if (_reconnectAttempts < _maxReconnectAttempts) {
+        _attemptReconnect();
+      } else {
+        handleHangup();
+      }
+    }
+  }
+
   void handleHangup() {
+    _destroyReconnectTimer();
     _destroyTimer();
     _cleanup();
     _updateState(CallState.ended);
@@ -390,9 +450,11 @@ class CallService {
 
   Future<void> _cleanup() async {
     try {
+      _destroyReconnectTimer();
       _destroyTimer();
       _time = 0;
       _toUserIsReady = false;
+      _reconnectAttempts = 0;
 
       if (_localStream != null) {
         for (var track in _localStream!.getTracks()) {

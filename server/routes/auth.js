@@ -120,8 +120,13 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // 查找用户（通过ID）
-    const user = await User.findById(userId);
+    // 查找用户（通过ID）并更新登录时间（原子操作）
+    const user = await User.findOneAndUpdate(
+      { _id: userId, isActive: true },
+      { $set: { lastLoginAt: new Date() } },
+      { new: true }
+    );
+    
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -137,18 +142,6 @@ router.post('/login', async (req, res) => {
         message: '用户名或密码错误'
       });
     }
-
-    // 检查用户是否被禁用
-    if (!user.isActive) {
-      return res.status(403).json({
-        success: false,
-        message: '账户已被禁用'
-      });
-    }
-
-    // 更新最后登录时间
-    user.lastLoginAt = new Date();
-    await user.save();
 
     // 生成令牌
     const token = generateToken(user._id);
@@ -166,11 +159,16 @@ router.post('/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('登录错误:', error);
+    console.error('登录错误:', {
+      userId: userId,
+      error: error.message,
+      stack: error.stack,
+      timestamp: new Date().toISOString()
+    });
     res.status(500).json({
       success: false,
       message: '登录失败',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : '服务器内部错误'
     });
   }
 });
