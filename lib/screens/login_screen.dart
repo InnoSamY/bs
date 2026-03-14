@@ -3,6 +3,13 @@ import 'package:flutter_base/services/auth_service.dart';
 import 'package:flutter_base/screens/register_screen.dart';
 import 'package:flutter_base/screens/contacts_screen.dart';
 
+/// 登录界面
+/// 
+/// 提供用户登录功能，包含以下特性：
+/// 1. 用户ID和密码输入
+/// 2. 表单验证
+/// 3. 加密密码显示/隐藏切换
+/// 4. 登录状态指示
 class LoginScreen extends StatefulWidget {
   @override
   _LoginScreenState createState() => _LoginScreenState();
@@ -23,6 +30,9 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
   
+  /// 执行登录
+  /// 
+  /// 验证表单并调用认证服务进行登录。
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
@@ -86,6 +96,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
+                      /// 应用图标
                       Container(
                         width: 80,
                         height: 80,
@@ -109,6 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       SizedBox(height: 40),
+                      /// 用户ID输入框
                       TextFormField(
                         controller: _userIdController,
                         decoration: InputDecoration(
@@ -128,6 +140,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         },
                       ),
                       SizedBox(height: 20),
+                      /// 密码输入框
                       TextFormField(
                         controller: _passwordController,
                         decoration: InputDecoration(
@@ -159,6 +172,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         },
                       ),
                       SizedBox(height: 40),
+                      /// 登录按钮
                       ElevatedButton(
                         onPressed: _isLoading ? null : _login,
                         child: _isLoading
@@ -177,6 +191,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       SizedBox(height: 20),
+                      /// 跳转到注册页面的链接
                       TextButton(
                         onPressed: () {
                           Navigator.push(

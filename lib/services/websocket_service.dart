@@ -1,6 +1,23 @@
 import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
+/// WebSocket 服务类（单例模式）
+/// 
+/// 提供实时通信功能，用于接收服务器推送的信令消息。
+/// 
+/// 主要功能：
+/// 1. WebSocket 连接管理
+/// 2. 心跳保活
+/// 3. 自动重连
+/// 4. 事件广播
+/// 
+/// 支持的事件：
+/// - video: 视频信令
+/// - incoming-call: 来电
+/// - call-accepted: 通话被接受
+/// - call-rejected: 通话被拒绝
+/// - call-ended: 通话结束
+/// - ice-candidate: ICE 候选者
 class WebSocketService {
   static final WebSocketService _instance = WebSocketService._internal();
   factory WebSocketService() => _instance;
@@ -20,9 +37,16 @@ class WebSocketService {
 
   bool get isConnected => _socket?.connected ?? false;
 
+  /// 事件广播控制器
+  /// 
+  /// 用于向订阅者广播服务器推送的事件。
   static final eventController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get eventStream => eventController.stream;
 
+  /// 连接到 WebSocket 服务器
+  /// 
+  /// 参数：
+  /// - userId: 当前用户ID，用于注册
   Future<void> connect(String userId) async {
     _currentUserId = userId;
 
@@ -132,6 +156,9 @@ class WebSocketService {
     }
   }
 
+  /// 启动心跳定时器
+  /// 
+  /// 每 30 秒发送一次 ping 信号，保持连接活跃。
   void _startHeartbeat() {
     _stopHeartbeat();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -141,11 +168,15 @@ class WebSocketService {
     });
   }
 
+  /// 停止心跳定时器
   void _stopHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
   }
 
+  /// 尝试重连
+  /// 
+  /// 使用指数退避算法计算重连延迟时间。
   void _attemptReconnect() {
     if (_reconnectAttempts >= _maxReconnectAttempts) {
       print('WebSocket 重连次数已达上限');
@@ -163,6 +194,10 @@ class WebSocketService {
     });
   }
 
+  /// 计算重连延迟时间
+  /// 
+  /// 使用指数退避算法：1s, 2s, 4s, 8s, ...
+  /// 最大延迟不超过 10 秒。
   Duration _calculateReconnectDelay() {
     final delay = Duration(
       milliseconds: (_initialReconnectDelay.inMilliseconds * 
@@ -174,6 +209,7 @@ class WebSocketService {
     return delay;
   }
 
+  /// 断开连接
   void disconnect() {
     _stopHeartbeat();
     _reconnectTimer?.cancel();
@@ -185,6 +221,7 @@ class WebSocketService {
     _reconnectAttempts = 0;
   }
 
+  /// 释放资源
   void dispose() {
     disconnect();
     if (!eventController.isClosed) {

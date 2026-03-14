@@ -5,6 +5,14 @@ import 'package:flutter_base/services/crypto_service.dart';
 import 'package:flutter_base/screens/login_screen.dart';
 import 'dart:io';
 
+/// 注册界面
+/// 
+/// 提供用户注册功能，包含以下特性：
+/// 1. 用户名、密码、个性签名输入
+/// 2. 头像上传
+/// 3. 生成后量子加密密钥对
+/// 4. 表单验证
+/// 5. 注册成功后显示用户ID
 class RegisterScreen extends StatefulWidget {
   @override
   _RegisterScreenState createState() => _RegisterScreenState();
@@ -29,6 +37,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
   
+  /// 选择图片
+  /// 
+  /// 从相册中选择头像图片。
   Future<void> _pickImage() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
@@ -40,6 +51,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
   
+  /// 执行注册
+  /// 
+  /// 生成密钥对并调用认证服务进行注册。
   Future<void> _register() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
@@ -154,6 +168,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
+                      /// 头像上传区域
                       GestureDetector(
                         onTap: _pickImage,
                         child: Container(
@@ -189,6 +204,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         style: TextStyle(color: Colors.blue[600]),
                       ),
                       SizedBox(height: 40),
+                      /// 用户名输入框
                       TextFormField(
                         controller: _usernameController,
                         decoration: InputDecoration(
@@ -208,6 +224,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         },
                       ),
                       SizedBox(height: 20),
+                      /// 密码输入框
                       TextFormField(
                         controller: _passwordController,
                         decoration: InputDecoration(
@@ -242,6 +259,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         },
                       ),
                       SizedBox(height: 20),
+                      /// 个性签名输入框
                       TextFormField(
                         controller: _bioController,
                         decoration: InputDecoration(
@@ -256,6 +274,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         maxLines: 2,
                       ),
                       SizedBox(height: 40),
+                      /// 注册按钮
                       ElevatedButton(
                         onPressed: _isLoading ? null : _register,
                         child: _isLoading
@@ -274,6 +293,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                       ),
                       SizedBox(height: 20),
+                      /// 跳转到登录页面的链接
                       TextButton(
                         onPressed: () {
                           Navigator.push(

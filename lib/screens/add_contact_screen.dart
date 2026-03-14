@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_base/services/contact_service.dart';
 
+/// 添加联系人界面
+/// 
+/// 提供添加联系人的功能，包含以下特性：
+/// 1. 输入联系人ID
+/// 2. 发送添加请求
+/// 3. 表单验证
+/// 4. 添加状态指示
 class AddContactScreen extends StatefulWidget {
   @override
   _AddContactScreenState createState() => _AddContactScreenState();
@@ -18,6 +25,9 @@ class _AddContactScreenState extends State<AddContactScreen> {
     super.dispose();
   }
   
+  /// 添加联系人
+  /// 
+  /// 验证表单并发送添加联系人请求。
   Future<void> _addContact() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
@@ -90,6 +100,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
+                      /// 图标
                       Container(
                         width: 80,
                         height: 80,
@@ -113,6 +124,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
                         ),
                       ),
                       SizedBox(height: 40),
+                      /// 联系人ID输入框
                       TextFormField(
                         controller: _contactIdController,
                         decoration: InputDecoration(
@@ -132,6 +144,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
                         },
                       ),
                       SizedBox(height: 40),
+                      /// 发送添加请求按钮
                       ElevatedButton(
                         onPressed: _isLoading ? null : _addContact,
                         child: _isLoading

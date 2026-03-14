@@ -3,12 +3,34 @@ import 'package:dio/dio.dart';
 import 'package:flutter_base/models/user.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 认证服务类
+/// 
+/// 提供用户注册、登录、登出等功能。
+/// 
+/// 主要功能：
+/// 1. 用户注册（register）
+/// 2. 用户登录（login）
+/// 3. 用户登出（logout）
+/// 4. 获取当前用户信息（getCurrentUser）
+/// 5. 本地存储用户信息（_saveUser）
 class AuthService {
   final Dio _dio = Dio();
   // 云服务器API地址
   final String _baseUrl = 'http://123.56.168.149:3000/api';
   
-  // 注册用户
+  /// 注册新用户
+  /// 
+  /// 向服务器发送注册请求，创建新用户账户。
+  /// 
+  /// 参数：
+  /// - username: 用户名
+  /// - password: 密码
+  /// - avatar: 头像路径
+  /// - bio: 个性签名
+  /// - publicKey: 公钥（用于后量子加密）
+  /// 
+  /// 返回：
+  /// - User: 创建的用户对象
   Future<User> register({
     required String username,
     required String password,
@@ -40,7 +62,16 @@ class AuthService {
     }
   }
   
-  // 登录用户
+  /// 用户登录
+  /// 
+  /// 向服务器发送登录请求，验证用户身份。
+  /// 
+  /// 参数：
+  /// - userId: 用户ID
+  /// - password: 密码
+  /// 
+  /// 返回：
+  /// - User: 登录成功的用户对象
   Future<User> login({
     required String userId,
     required String password,
@@ -66,13 +97,20 @@ class AuthService {
     }
   }
   
-  // 退出登录
+  /// 用户登出
+  /// 
+  /// 清除本地存储的用户信息。
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('user');
   }
   
-  // 获取当前用户
+  /// 获取当前登录用户
+  /// 
+  /// 从本地存储中读取用户信息。
+  /// 
+  /// 返回：
+  /// - User?: 当前用户对象，如果未登录则返回 null
   Future<User?> getCurrentUser() async {
     final prefs = await SharedPreferences.getInstance();
     final userJson = prefs.getString('user');
@@ -82,7 +120,12 @@ class AuthService {
     return User.fromJson(userMap);
   }
   
-  // 保存用户信息到本地
+  /// 保存用户信息到本地
+  /// 
+  /// 使用 SharedPreferences 将用户信息持久化存储。
+  /// 
+  /// 参数：
+  /// - user: 用户对象
   Future<void> _saveUser(User user) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user', jsonEncode(user.toJson()));

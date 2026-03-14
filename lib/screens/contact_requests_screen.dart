@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_base/services/contact_service.dart';
 
+/// 联系人请求界面
+/// 
+/// 显示用户的联系人请求列表，包含以下功能：
+/// 1. 查看收到的联系人请求
+/// 2. 查看发送的联系人请求
+/// 3. 接受或拒绝联系人请求
 class ContactRequestsScreen extends StatefulWidget {
   @override
   _ContactRequestsScreenState createState() => _ContactRequestsScreenState();
@@ -19,6 +25,9 @@ class _ContactRequestsScreenState extends State<ContactRequestsScreen> {
     _loadRequests();
   }
   
+  /// 加载请求列表
+  /// 
+  /// 从服务器获取收到和发送的联系人请求列表。
   Future<void> _loadRequests() async {
     setState(() {
       _isLoading = true;
@@ -41,6 +50,12 @@ class _ContactRequestsScreenState extends State<ContactRequestsScreen> {
     }
   }
   
+  /// 接受请求
+  /// 
+  /// 接受指定的联系人请求。
+  /// 
+  /// 参数：
+  /// - requestId: 请求ID
   Future<void> _acceptRequest(String requestId) async {
     try {
       await _contactService.acceptContactRequest(requestId: requestId);
@@ -55,6 +70,12 @@ class _ContactRequestsScreenState extends State<ContactRequestsScreen> {
     }
   }
   
+  /// 拒绝请求
+  /// 
+  /// 拒绝指定的联系人请求。
+  /// 
+  /// 参数：
+  /// - requestId: 请求ID
   Future<void> _rejectRequest(String requestId) async {
     try {
       await _contactService.rejectContactRequest(requestId: requestId);
@@ -69,6 +90,9 @@ class _ContactRequestsScreenState extends State<ContactRequestsScreen> {
     }
   }
   
+  /// 构建收到的请求列表
+  /// 
+  /// 返回一个包含所有收到的联系人请求的列表视图。
   Widget _buildReceivedRequests() {
     if (_receivedRequests.isEmpty) {
       return Center(
@@ -127,11 +151,13 @@ class _ContactRequestsScreenState extends State<ContactRequestsScreen> {
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                /// 接受按钮
                 IconButton(
                   icon: Icon(Icons.check, color: Colors.green),
                   onPressed: () => _acceptRequest(request['id']),
                   tooltip: '接受',
                 ),
+                /// 拒绝按钮
                 IconButton(
                   icon: Icon(Icons.close, color: Colors.red),
                   onPressed: () => _rejectRequest(request['id']),
@@ -145,6 +171,9 @@ class _ContactRequestsScreenState extends State<ContactRequestsScreen> {
     );
   }
   
+  /// 构建发送的请求列表
+  /// 
+  /// 返回一个包含所有发送的联系人请求的列表视图。
   Widget _buildSentRequests() {
     if (_sentRequests.isEmpty) {
       return Center(
@@ -213,6 +242,12 @@ class _ContactRequestsScreenState extends State<ContactRequestsScreen> {
     );
   }
   
+  /// 格式化日期
+  /// 
+  /// 将日期字符串格式化为可读的日期格式。
+  /// 
+  /// 参数：
+  /// - dateStr: 日期字符串
   String _formatDate(String? dateStr) {
     if (dateStr == null) return '未知';
     try {

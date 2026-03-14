@@ -4,11 +4,21 @@ import 'package:flutter_base/screens/contacts_screen.dart';
 import 'package:flutter_base/services/call_service.dart';
 import 'package:flutter_base/services/websocket_service.dart';
 
+/// 通话类型枚举
+/// 
+/// 表示通话的方向。
 enum CallType {
-  outgoing,
-  incoming,
+  outgoing,  // 外呼通话
+  incoming,  // 来电
 }
 
+/// 通话界面
+/// 
+/// 显示通话界面，包括：
+/// - 对方头像和用户名
+/// - 通话状态
+/// - 通话时长
+/// - 操作按钮（静音、扬声器、挂断、接听、拒绝）
 class CallScreen extends StatefulWidget {
   final Contact contact;
   final CallType callType;
@@ -34,6 +44,9 @@ class _CallScreenState extends State<CallScreen> {
     _initializeCall();
   }
 
+  /// 初始化通话
+  /// 
+  /// 设置通话状态监听，发起或接听通话。
   Future<void> _initializeCall() async {
     _callService.videoEvent();
 
@@ -91,6 +104,7 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
+  /// 接听来电
   Future<void> _acceptCall() async {
     try {
       await _callService.acceptCall();
@@ -104,26 +118,28 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
+  /// 拒绝来电
   void _rejectCall() {
     _callService.rejectCall();
     Navigator.pop(context);
   }
 
+  /// 结束通话
   Future<void> _endCall() async {
     await _callService.endCall();
-    Navigator.pop(context);
-  }
-
-  void _closeScreen() {
     if (mounted) {
-      Future.delayed(Duration(seconds: 1), () {
-        if (mounted && Navigator.canPop(context)) {
-          Navigator.pop(context);
-        }
-      });
+      Navigator.pop(context);
     }
   }
 
+  /// 关闭界面
+  void _closeScreen() {
+    if (mounted && Navigator.canPop(context)) {
+      Navigator.pop(context);
+    }
+  }
+
+  /// 切换静音状态
   void _toggleMute() {
     setState(() {
       _isMuted = !_isMuted;
@@ -131,12 +147,16 @@ class _CallScreenState extends State<CallScreen> {
     _callService.setMute(_isMuted);
   }
 
+  /// 切换扬声器状态
   void _toggleSpeaker() {
     setState(() {
       _isSpeakerOn = !_isSpeakerOn;
     });
   }
 
+  /// 格式化通话时长
+  /// 
+  /// 将秒数转换为 mm:ss 格式。
   String _formatDuration(int seconds) {
     int minutes = seconds ~/ 60;
     int remainingSeconds = seconds % 60;
@@ -145,7 +165,8 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   void dispose() {
-    _callService.dispose();
+    // 不要调用 _callService.dispose()，因为 CallService 是单例模式
+    // 应该在应用退出时才调用 dispose()
     super.dispose();
   }
 
@@ -248,6 +269,9 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
+  /// 构建来电按钮
+  /// 
+  /// 包含拒绝和接听两个按钮。
   Widget _buildIncomingCallButtons() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -307,6 +331,9 @@ class _CallScreenState extends State<CallScreen> {
     );
   }
 
+  /// 构建通话中按钮
+  /// 
+  /// 包含静音、挂断、扬声器三个按钮。
   Widget _buildActiveCallButtons() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,

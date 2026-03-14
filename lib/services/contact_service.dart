@@ -4,12 +4,25 @@ import 'package:flutter_base/models/user.dart';
 import 'package:flutter_base/screens/contacts_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 联系人服务类
+/// 
+/// 提供联系人管理功能。
+/// 
+/// 主要功能：
+/// 1. 获取联系人列表（getContacts）
+/// 2. 获取联系人请求列表（getContactRequests）
+/// 3. 添加联系人（addContact）
+/// 4. 删除联系人（deleteContact）
+/// 5. 接受联系人请求（acceptContactRequest）
+/// 6. 拒绝联系人请求（rejectContactRequest）
 class ContactService {
   final Dio _dio = Dio();
   // 云服务器API地址
   final String _baseUrl = 'http://123.56.168.149:3000/api';
   
-  // 获取JWT token
+  /// 获取当前用户的 JWT token
+  /// 
+  /// 用于 API 认证。
   Future<String?> _getToken() async {
     final prefs = await SharedPreferences.getInstance();
     final userJson = prefs.getString('user');
@@ -19,7 +32,12 @@ class ContactService {
     return userMap['token'];
   }
   
-  // 获取联系人列表
+  /// 获取联系人列表
+  /// 
+  /// 从服务器获取当前用户的所有联系人。
+  /// 
+  /// 返回：
+  /// - List<Contact>: 联系人列表
   Future<List<Contact>> getContacts() async {
     try {
       final token = await _getToken();
@@ -57,7 +75,12 @@ class ContactService {
     }
   }
   
-  // 获取联系人请求列表
+  /// 获取联系人请求列表
+  /// 
+  /// 获取收到的和发送的联系人请求。
+  /// 
+  /// 返回：
+  /// - Map<String, List<dynamic>>: 包含 received（收到的）和 sent（发送的）两个列表
   Future<Map<String, List<dynamic>>> getContactRequests() async {
     try {
       final token = await _getToken();
@@ -88,7 +111,13 @@ class ContactService {
     }
   }
   
-  // 添加联系人
+  /// 添加联系人
+  /// 
+  /// 发送添加联系人请求。
+  /// 
+  /// 参数：
+  /// - contactId: 对方用户ID
+  /// - verificationMessage: 验证消息
   Future<void> addContact({
     required String contactId,
     required String verificationMessage,
@@ -121,7 +150,12 @@ class ContactService {
     }
   }
   
-  // 删除联系人
+  /// 删除联系人
+  /// 
+  /// 从联系人列表中删除指定用户。
+  /// 
+  /// 参数：
+  /// - contactId: 对方用户ID
   Future<void> deleteContact({
     required String contactId,
   }) async {
@@ -149,7 +183,12 @@ class ContactService {
     }
   }
   
-  // 接受联系人请求
+  /// 接受联系人请求
+  /// 
+  /// 同意对方的联系人请求。
+  /// 
+  /// 参数：
+  /// - requestId: 请求ID
   Future<void> acceptContactRequest({
     required String requestId,
   }) async {
@@ -180,7 +219,12 @@ class ContactService {
     }
   }
   
-  // 拒绝联系人请求
+  /// 拒绝联系人请求
+  /// 
+  /// 拒绝对方的联系人请求。
+  /// 
+  /// 参数：
+  /// - requestId: 请求ID
   Future<void> rejectContactRequest({
     required String requestId,
   }) async {
