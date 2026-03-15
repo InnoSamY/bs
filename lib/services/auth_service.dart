@@ -120,6 +120,60 @@ class AuthService {
     return User.fromJson(userMap);
   }
   
+  /// 更新用户资料
+  /// 
+  /// 向服务器发送更新请求，修改用户的头像和个性签名。
+  /// 
+  /// 参数：
+  /// - avatar: 头像（Base64编码）
+  /// - bio: 个性签名
+  /// 
+  /// 返回：
+  /// - User: 更新后的用户对象
+  Future<User> updateProfile({
+    required String avatar,
+    required String bio,
+  }) async {
+    try {
+      final currentUser = await getCurrentUser();
+      if (currentUser == null) {
+        throw Exception('用户未登录');
+      }
+
+      final response = await _dio.put(
+        '$_baseUrl/auth/profile',
+        data: {
+          'avatar': avatar,
+          'bio': bio,
+        },
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer ${currentUser.token}',
+          },
+        ),
+      );
+
+      if (response.data['success'] == true) {
+        final updatedUser = User.fromJson(response.data['data']);
+        final mergedUser = User(
+          id: updatedUser.id,
+          username: updatedUser.username,
+          password: currentUser.password,
+          avatar: updatedUser.avatar,
+          bio: updatedUser.bio,
+          publicKey: updatedUser.publicKey,
+          token: currentUser.token,
+        );
+        await _saveUser(mergedUser);
+        return mergedUser;
+      } else {
+        throw Exception(response.data['message'] ?? '更新失败');
+      }
+    } catch (error) {
+      throw Exception('更新失败: $error');
+    }
+  }
+
   /// 保存用户信息到本地
   /// 
   /// 使用 SharedPreferences 将用户信息持久化存储。

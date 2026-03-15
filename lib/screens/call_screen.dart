@@ -4,21 +4,11 @@ import 'package:flutter_base/screens/contacts_screen.dart';
 import 'package:flutter_base/services/call_service.dart';
 import 'package:flutter_base/services/websocket_service.dart';
 
-/// 通话类型枚举
-/// 
-/// 表示通话的方向。
 enum CallType {
-  outgoing,  // 外呼通话
-  incoming,  // 来电
+  outgoing,
+  incoming,
 }
 
-/// 通话界面
-/// 
-/// 显示通话界面，包括：
-/// - 对方头像和用户名
-/// - 通话状态
-/// - 通话时长
-/// - 操作按钮（静音、扬声器、挂断、接听、拒绝）
 class CallScreen extends StatefulWidget {
   final Contact contact;
   final CallType callType;
@@ -44,9 +34,6 @@ class _CallScreenState extends State<CallScreen> {
     _initializeCall();
   }
 
-  /// 初始化通话
-  /// 
-  /// 设置通话状态监听，发起或接听通话。
   Future<void> _initializeCall() async {
     _callService.videoEvent();
 
@@ -104,7 +91,6 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
-  /// 接听来电
   Future<void> _acceptCall() async {
     try {
       await _callService.acceptCall();
@@ -118,13 +104,11 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
-  /// 拒绝来电
   void _rejectCall() {
     _callService.rejectCall();
     Navigator.pop(context);
   }
 
-  /// 结束通话
   Future<void> _endCall() async {
     await _callService.endCall();
     if (mounted) {
@@ -132,14 +116,12 @@ class _CallScreenState extends State<CallScreen> {
     }
   }
 
-  /// 关闭界面
   void _closeScreen() {
     if (mounted && Navigator.canPop(context)) {
       Navigator.pop(context);
     }
   }
 
-  /// 切换静音状态
   void _toggleMute() {
     setState(() {
       _isMuted = !_isMuted;
@@ -147,16 +129,12 @@ class _CallScreenState extends State<CallScreen> {
     _callService.setMute(_isMuted);
   }
 
-  /// 切换扬声器状态
   void _toggleSpeaker() {
     setState(() {
       _isSpeakerOn = !_isSpeakerOn;
     });
   }
 
-  /// 格式化通话时长
-  /// 
-  /// 将秒数转换为 mm:ss 格式。
   String _formatDuration(int seconds) {
     int minutes = seconds ~/ 60;
     int remainingSeconds = seconds % 60;
@@ -165,8 +143,6 @@ class _CallScreenState extends State<CallScreen> {
 
   @override
   void dispose() {
-    // 不要调用 _callService.dispose()，因为 CallService 是单例模式
-    // 应该在应用退出时才调用 dispose()
     super.dispose();
   }
 
@@ -176,102 +152,79 @@ class _CallScreenState extends State<CallScreen> {
     final isRinging = _callService.currentState == CallState.ringing;
 
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: isIncoming && isRinging
-                ? [Colors.orange[700]!, Colors.orange[900]!]
-                : [Colors.blue[800]!, Colors.blue[900]!],
-          ),
-        ),
-        child: SafeArea(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SizedBox(height: 60),
-              Container(
-                width: 120,
-                height: 120,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 3),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
-                      blurRadius: 20,
-                      spreadRadius: 5,
-                    ),
-                  ],
-                ),
-                child: CircleAvatar(
-                  radius: 57,
-                  backgroundColor: isIncoming && isRinging
-                      ? Colors.orange[600]
-                      : Colors.blue[700],
-                  child: Text(
-                    widget.contact.username[0],
-                    style: TextStyle(fontSize: 50, color: Colors.white),
-                  ),
+      backgroundColor: Colors.grey[900],
+      body: SafeArea(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(height: 60),
+            Container(
+              width: 100,
+              height: 100,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.grey[800],
+                border: Border.all(color: Colors.grey[700]!, width: 2),
+              ),
+              child: Center(
+                child: Text(
+                  widget.contact.username[0].toUpperCase(),
+                  style: TextStyle(fontSize: 42, color: Colors.white, fontWeight: FontWeight.w300),
                 ),
               ),
-              SizedBox(height: 30),
-              Text(
-                widget.contact.username,
-                style: TextStyle(
-                  fontSize: 28,
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+            ),
+            SizedBox(height: 24),
+            Text(
+              widget.contact.username,
+              style: TextStyle(
+                fontSize: 26,
+                color: Colors.white,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              _statusText,
+              style: TextStyle(fontSize: 16, color: Colors.grey[400]),
+            ),
+            if (_callService.currentState == CallState.connected)
+              Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: StreamBuilder<int>(
+                  stream: _callService.timeStream,
+                  builder: (context, snapshot) {
+                    return Text(
+                      _formatDuration(snapshot.data ?? 0),
+                      style: TextStyle(
+                        fontSize: 42,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w300,
+                      ),
+                    );
+                  },
                 ),
               ),
-              SizedBox(height: 10),
-              Text(
-                _statusText,
-                style: TextStyle(fontSize: 18, color: Colors.white70),
+            if (_callService.currentState == CallState.calling ||
+                _callService.currentState == CallState.connecting)
+              Padding(
+                padding: const EdgeInsets.all(30.0),
+                child: CircularProgressIndicator(
+                  color: Colors.grey[500],
+                  strokeWidth: 2,
+                ),
               ),
-              if (_callService.currentState == CallState.connected)
-                Padding(
-                  padding: const EdgeInsets.all(20.0),
-                  child: StreamBuilder<int>(
-                    stream: _callService.timeStream,
-                    builder: (context, snapshot) {
-                      return Text(
-                        _formatDuration(snapshot.data ?? 0),
-                        style: TextStyle(
-                          fontSize: 48,
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              if (_callService.currentState == CallState.calling ||
-                  _callService.currentState == CallState.connecting)
-                Padding(
-                  padding: const EdgeInsets.all(30.0),
-                  child: CircularProgressIndicator(
-                    color: Colors.white,
-                    strokeWidth: 3,
-                  ),
-                ),
-              Spacer(),
-              if (isIncoming && isRinging)
-                _buildIncomingCallButtons()
-              else
-                _buildActiveCallButtons(),
-              SizedBox(height: 60),
-            ],
-          ),
+            Spacer(),
+            if (isIncoming && isRinging)
+              _buildIncomingCallButtons()
+            else
+              _buildActiveCallButtons(),
+            SizedBox(height: 60),
+          ],
         ),
       ),
     );
   }
 
-  /// 构建来电按钮
-  /// 
-  /// 包含拒绝和接听两个按钮。
   Widget _buildIncomingCallButtons() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -281,59 +234,42 @@ class _CallScreenState extends State<CallScreen> {
             GestureDetector(
               onTap: _rejectCall,
               child: Container(
-                width: 80,
-                height: 80,
+                width: 72,
+                height: 72,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.red,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.red.withOpacity(0.5),
-                      blurRadius: 15,
-                      spreadRadius: 3,
-                    ),
-                  ],
+                  color: Colors.red[400],
                 ),
-                child: Icon(Icons.call_end, size: 40, color: Colors.white),
+                child: Icon(Icons.call_end, size: 32, color: Colors.white),
               ),
             ),
             SizedBox(height: 12),
-            Text('拒绝', style: TextStyle(color: Colors.white, fontSize: 16)),
+            Text('拒绝', style: TextStyle(color: Colors.grey[400], fontSize: 14)),
           ],
         ),
-        SizedBox(width: 80),
+        SizedBox(width: 72),
         Column(
           children: [
             GestureDetector(
               onTap: _acceptCall,
               child: Container(
-                width: 80,
-                height: 80,
+                width: 72,
+                height: 72,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.green,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.green.withOpacity(0.5),
-                      blurRadius: 15,
-                      spreadRadius: 3,
-                    ),
-                  ],
+                  color: Colors.green[400],
                 ),
-                child: Icon(Icons.call, size: 40, color: Colors.white),
+                child: Icon(Icons.call, size: 32, color: Colors.white),
               ),
             ),
             SizedBox(height: 12),
-            Text('接听', style: TextStyle(color: Colors.white, fontSize: 16)),
+            Text('接听', style: TextStyle(color: Colors.grey[400], fontSize: 14)),
           ],
         ),
       ],
     );
   }
 
-  /// 构建通话中按钮
-  /// 
-  /// 包含静音、挂断、扬声器三个按钮。
   Widget _buildActiveCallButtons() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -343,21 +279,16 @@ class _CallScreenState extends State<CallScreen> {
             GestureDetector(
               onTap: _toggleMute,
               child: Container(
-                width: 60,
-                height: 60,
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _isMuted
-                      ? Colors.blue[600]
-                      : Colors.white.withOpacity(0.2),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.3),
-                    width: 1,
-                  ),
+                  color: _isMuted ? Colors.grey[600] : Colors.grey[800],
+                  border: Border.all(color: Colors.grey[700]!),
                 ),
                 child: Icon(
                   _isMuted ? Icons.mic_off : Icons.mic,
-                  size: 30,
+                  size: 24,
                   color: Colors.white,
                 ),
               ),
@@ -365,57 +296,45 @@ class _CallScreenState extends State<CallScreen> {
             SizedBox(height: 8),
             Text(
               _isMuted ? '静音中' : '静音',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(color: Colors.grey[500], fontSize: 12),
             ),
           ],
         ),
-        SizedBox(width: 40),
+        SizedBox(width: 32),
         Column(
           children: [
             GestureDetector(
               onTap: _endCall,
               child: Container(
-                width: 80,
-                height: 80,
+                width: 72,
+                height: 72,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.red,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.red.withOpacity(0.5),
-                      blurRadius: 15,
-                      spreadRadius: 3,
-                    ),
-                  ],
+                  color: Colors.red[400],
                 ),
-                child: Icon(Icons.call_end, size: 40, color: Colors.white),
+                child: Icon(Icons.call_end, size: 32, color: Colors.white),
               ),
             ),
             SizedBox(height: 8),
-            Text('挂断', style: TextStyle(color: Colors.white70, fontSize: 12)),
+            Text('挂断', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
           ],
         ),
-        SizedBox(width: 40),
+        SizedBox(width: 32),
         Column(
           children: [
             GestureDetector(
               onTap: _toggleSpeaker,
               child: Container(
-                width: 60,
-                height: 60,
+                width: 56,
+                height: 56,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _isSpeakerOn
-                      ? Colors.blue[600]
-                      : Colors.white.withOpacity(0.2),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.3),
-                    width: 1,
-                  ),
+                  color: _isSpeakerOn ? Colors.grey[600] : Colors.grey[800],
+                  border: Border.all(color: Colors.grey[700]!),
                 ),
                 child: Icon(
                   _isSpeakerOn ? Icons.volume_up : Icons.volume_down,
-                  size: 30,
+                  size: 24,
                   color: Colors.white,
                 ),
               ),
@@ -423,7 +342,7 @@ class _CallScreenState extends State<CallScreen> {
             SizedBox(height: 8),
             Text(
               _isSpeakerOn ? '扬声器' : '听筒',
-              style: TextStyle(color: Colors.white70, fontSize: 12),
+              style: TextStyle(color: Colors.grey[500], fontSize: 12),
             ),
           ],
         ),

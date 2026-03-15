@@ -6,10 +6,8 @@ import 'package:flutter_base/services/call_service.dart';
 import 'package:flutter_base/screens/add_contact_screen.dart';
 import 'package:flutter_base/screens/call_screen.dart';
 import 'package:flutter_base/screens/contact_requests_screen.dart';
+import 'package:flutter_base/screens/profile_screen.dart';
 
-/// 联系人模型类
-/// 
-/// 表示一个联系人实体，包含联系人的基本信息。
 class Contact {
   final String id;
   final String username;
@@ -26,14 +24,6 @@ class Contact {
   });
 }
 
-/// 联系人列表界面
-/// 
-/// 显示用户的联系人列表，提供以下功能：
-/// 1. 查看联系人列表
-/// 2. 发起语音通话
-/// 3. 删除联系人
-/// 4. 查看我的用户ID
-/// 5. 退出登录
 class ContactsScreen extends StatefulWidget {
   @override
   _ContactsScreenState createState() => _ContactsScreenState();
@@ -56,18 +46,12 @@ class _ContactsScreenState extends State<ContactsScreen> {
     _initialize();
   }
 
-  /// 初始化界面
-  /// 
-  /// 加载当前用户信息、联系人列表，并建立 WebSocket 连接。
   Future<void> _initialize() async {
     await _loadCurrentUser();
     await _loadContacts();
     await _connectWebSocket();
   }
 
-  /// 加载当前用户信息
-  /// 
-  /// 从本地存储获取当前登录的用户信息。
   Future<void> _loadCurrentUser() async {
     final user = await _authService.getCurrentUser();
     if (user != null) {
@@ -78,9 +62,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  /// 连接 WebSocket
-  /// 
-  /// 建立与服务器的实时通信连接，用于接收来电等事件。
   Future<void> _connectWebSocket() async {
     if (_currentUserId == null) return;
 
@@ -99,14 +80,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  /// 处理来电
-  /// 
-  /// 当收到来电时，自动查找联系人信息并跳转到通话界面。
-  /// 
-  /// 参数：
-  /// - callerId: 呼叫方用户ID
-  /// - callerName: 呼叫方用户名
-  /// - isOnlyAudio: 是否仅音频通话
   void _handleIncomingCall(String callerId, String? callerName, bool isOnlyAudio) {
     print('处理来电: callerId=$callerId, callerName=$callerName');
 
@@ -133,9 +106,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  /// 加载联系人列表
-  /// 
-  /// 从服务器获取当前用户的联系人列表。
   Future<void> _loadContacts() async {
     setState(() {
       _isLoading = true;
@@ -157,21 +127,12 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  /// 退出登录
-  /// 
-  /// 断开 WebSocket 连接，清除本地用户信息，并跳转到登录界面。
   void _logout() async {
     _webSocketService.disconnect();
     await _authService.logout();
     Navigator.pushReplacementNamed(context, '/login');
   }
 
-  /// 发起通话
-  /// 
-  /// 跳转到通话界面，发起对指定联系人的语音通话。
-  /// 
-  /// 参数：
-  /// - contact: 要通话的联系人
   void _startCall(Contact contact) {
     Navigator.push(
       context,
@@ -184,16 +145,11 @@ class _ContactsScreenState extends State<ContactsScreen> {
     );
   }
 
-  /// 删除联系人
-  /// 
-  /// 显示确认对话框，删除指定的联系人。
-  /// 
-  /// 参数：
-  /// - contact: 要删除的联系人
   void _deleteContact(Contact contact) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         title: Text('删除联系人'),
         content: Text('确定要删除 ${contact.username} 吗？'),
         actions: [
@@ -228,38 +184,37 @@ class _ContactsScreenState extends State<ContactsScreen> {
     );
   }
 
-  /// 显示我的用户ID
-  /// 
-  /// 弹出对话框显示当前用户的ID，方便分享给好友添加为联系人。
   void _showMyID() {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         title: Text('我的ID'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text('您的用户ID：'),
-            SizedBox(height: 10),
+            SizedBox(height: 12),
             Container(
-              padding: EdgeInsets.all(10),
+              width: double.infinity,
+              padding: EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.blue[50],
+                color: Colors.grey[100],
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.blue),
               ),
               child: SelectableText(
                 _currentUserId ?? '未知',
                 style: TextStyle(
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w600,
                   fontSize: 16,
+                  color: Colors.grey[800],
                 ),
               ),
             ),
-            SizedBox(height: 10),
+            SizedBox(height: 12),
             Text(
               '分享此ID给好友，让他们添加您为联系人',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
+              style: TextStyle(color: Colors.grey[500], fontSize: 12),
             ),
           ],
         ),
@@ -285,9 +240,9 @@ class _ContactsScreenState extends State<ContactsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('联系人'),
-        backgroundColor: Colors.blue[600],
+        backgroundColor: Colors.grey[800],
+        elevation: 0,
         actions: [
-          /// WebSocket 连接状态指示器
           Container(
             margin: EdgeInsets.only(right: 8),
             child: Center(
@@ -301,9 +256,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
               ),
             ),
           ),
-          /// 联系人请求按钮
           IconButton(
-            icon: Icon(Icons.person_add_alt_1, color: Colors.white),
+            icon: Icon(Icons.person_add_alt_1_outlined, color: Colors.white),
             onPressed: () {
               Navigator.push(
                 context,
@@ -312,13 +266,13 @@ class _ContactsScreenState extends State<ContactsScreen> {
             },
             tooltip: '联系人请求',
           ),
-          /// 我的ID按钮
           IconButton(
-            icon: Icon(Icons.person, color: Colors.white),
-            onPressed: _showMyID,
-            tooltip: '我的ID',
+            icon: Icon(Icons.account_circle_outlined, color: Colors.white),
+            onPressed: () {
+              Navigator.pushNamed(context, '/profile');
+            },
+            tooltip: '个人信息',
           ),
-          /// 退出登录按钮
           IconButton(
             icon: Icon(Icons.logout, color: Colors.white),
             onPressed: _logout,
@@ -326,16 +280,17 @@ class _ContactsScreenState extends State<ContactsScreen> {
         ],
       ),
       body: _isLoading
-          ? Center(child: CircularProgressIndicator(color: Colors.blue))
+          ? Center(child: CircularProgressIndicator(color: Colors.grey[600]))
           : RefreshIndicator(
               onRefresh: _loadContacts,
+              color: Colors.grey[600],
               child: _contacts.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(
-                            Icons.contacts,
+                            Icons.people_outline,
                             size: 80,
                             color: Colors.grey[300],
                           ),
@@ -344,7 +299,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
                             '暂无联系人',
                             style: TextStyle(
                               fontSize: 18,
-                              color: Colors.grey[600],
+                              color: Colors.grey[500],
                             ),
                           ),
                           SizedBox(height: 8),
@@ -359,61 +314,59 @@ class _ContactsScreenState extends State<ContactsScreen> {
                       ),
                     )
                   : ListView.builder(
-                      padding: EdgeInsets.all(10),
+                      padding: EdgeInsets.all(12),
                       itemCount: _contacts.length,
                       itemBuilder: (context, index) {
                         final contact = _contacts[index];
-                        return Card(
-                          elevation: 3,
-                          margin: EdgeInsets.symmetric(vertical: 8),
-                          shape: RoundedRectangleBorder(
+                        return Container(
+                          margin: EdgeInsets.symmetric(vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: ListTile(
-                            /// 联系人头像
-                            leading: CircleAvatar(
-                              radius: 30,
-                              backgroundColor: Colors.blue[100],
-                              child: Text(
-                                contact.username[0],
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  color: Colors.blue,
+                            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            leading: Container(
+                              width: 48,
+                              height: 48,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[200],
+                                shape: BoxShape.circle,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  contact.username[0].toUpperCase(),
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w500,
+                                    color: Colors.grey[700],
+                                  ),
                                 ),
                               ),
                             ),
-                            /// 联系人信息
                             title: Text(
                               contact.username,
-                              style: TextStyle(fontWeight: FontWeight.bold),
+                              style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                                color: Colors.grey[800],
+                              ),
                             ),
-                            subtitle: Text(contact.bio),
-                            /// 操作按钮
+                            subtitle: Text(
+                              contact.bio,
+                              style: TextStyle(color: Colors.grey[500]),
+                            ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                /// 通话按钮
-                                Container(
-                                  margin: EdgeInsets.only(right: 10),
-                                  decoration: BoxDecoration(
-                                    color: Colors.green[100],
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: IconButton(
-                                    icon: Icon(Icons.call, color: Colors.green),
-                                    onPressed: () => _startCall(contact),
-                                  ),
+                                IconButton(
+                                  icon: Icon(Icons.call_outlined, color: Colors.grey[600]),
+                                  onPressed: () => _startCall(contact),
+                                  tooltip: '通话',
                                 ),
-                                /// 删除按钮
-                                Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.red[100],
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: IconButton(
-                                    icon: Icon(Icons.delete, color: Colors.red),
-                                    onPressed: () => _deleteContact(contact),
-                                  ),
+                                IconButton(
+                                  icon: Icon(Icons.delete_outline, color: Colors.grey[400]),
+                                  onPressed: () => _deleteContact(contact),
+                                  tooltip: '删除',
                                 ),
                               ],
                             ),
@@ -422,7 +375,6 @@ class _ContactsScreenState extends State<ContactsScreen> {
                       },
                     ),
             ),
-      /// 添加联系人浮动按钮
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           Navigator.push(
@@ -430,9 +382,9 @@ class _ContactsScreenState extends State<ContactsScreen> {
             MaterialPageRoute(builder: (context) => AddContactScreen()),
           );
         },
-        child: Icon(Icons.add),
-        backgroundColor: Colors.blue[600],
-        elevation: 5,
+        child: Icon(Icons.add, color: Colors.white),
+        backgroundColor: Colors.grey[800],
+        elevation: 2,
       ),
     );
   }

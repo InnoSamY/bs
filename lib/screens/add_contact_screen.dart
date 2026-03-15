@@ -1,13 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_base/services/contact_service.dart';
 
-/// 添加联系人界面
-/// 
-/// 提供添加联系人的功能，包含以下特性：
-/// 1. 输入联系人ID
-/// 2. 发送添加请求
-/// 3. 表单验证
-/// 4. 添加状态指示
 class AddContactScreen extends StatefulWidget {
   @override
   _AddContactScreenState createState() => _AddContactScreenState();
@@ -18,35 +11,31 @@ class _AddContactScreenState extends State<AddContactScreen> {
   final _contactIdController = TextEditingController();
   final _contactService = ContactService();
   bool _isLoading = false;
-  
+
   @override
   void dispose() {
     _contactIdController.dispose();
     super.dispose();
   }
-  
-  /// 添加联系人
-  /// 
-  /// 验证表单并发送添加联系人请求。
+
   Future<void> _addContact() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
       });
-      
+
       try {
         await _contactService.addContact(
           contactId: _contactIdController.text.trim(),
           verificationMessage: '请求添加您为联系人',
         );
-        
+
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('联系人添加请求已发送')),
         );
       } catch (error) {
         String errorMessage = error.toString();
-        // 提取错误信息中的实际消息
         if (errorMessage.startsWith('Exception: ')) {
           errorMessage = errorMessage.substring('Exception: '.length);
         }
@@ -60,111 +49,94 @@ class _AddContactScreenState extends State<AddContactScreen> {
       }
     }
   }
-  
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Color(0xFFF5F5F5),
       appBar: AppBar(
         title: Text('添加联系人'),
-        backgroundColor: Colors.blue[600],
+        backgroundColor: Colors.grey[800],
+        elevation: 0,
       ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.blue[600]!, Colors.blue[900]!],
-          ),
-        ),
-        child: Center(
-          child: SingleChildScrollView(
-            padding: EdgeInsets.all(20),
-            child: SizedBox(
-              width: 400,
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 20,
-                      offset: Offset(0, 10),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: EdgeInsets.all(24),
+          child: Container(
+            width: 400,
+            padding: EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      shape: BoxShape.circle,
                     ),
-                  ],
-                ),
-                padding: EdgeInsets.all(30),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      /// 图标
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          color: Colors.blue[100],
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          Icons.person_add,
-                          size: 40,
-                          color: Colors.blue,
-                        ),
-                      ),
-                      SizedBox(height: 30),
-                      Text(
-                        '添加联系人',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue[900],
-                        ),
-                      ),
-                      SizedBox(height: 40),
-                      /// 联系人ID输入框
-                      TextFormField(
-                        controller: _contactIdController,
-                        decoration: InputDecoration(
-                          labelText: '联系人ID',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          prefixIcon: Icon(Icons.person, color: Colors.blue),
-                          filled: true,
-                          fillColor: Colors.blue[50],
-                        ),
-                        validator: (value) {
-                          if (value!.isEmpty) {
-                            return '请输入联系人ID';
-                          }
-                          return null;
-                        },
-                      ),
-                      SizedBox(height: 40),
-                      /// 发送添加请求按钮
-                      ElevatedButton(
-                        onPressed: _isLoading ? null : _addContact,
-                        child: _isLoading
-                            ? CircularProgressIndicator(color: Colors.white)
-                            : Text(
-                                '发送添加请求',
-                                style: TextStyle(fontSize: 16),
-                              ),
-                        style: ElevatedButton.styleFrom(
-                          minimumSize: Size(double.infinity, 50),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          backgroundColor: Colors.blue[600],
-                          elevation: 5,
-                        ),
-                      ),
-                    ],
+                    child: Icon(
+                      Icons.person_add_outlined,
+                      size: 36,
+                      color: Colors.grey[600],
+                    ),
                   ),
-                ),
+                  SizedBox(height: 24),
+                  Text(
+                    '添加联系人',
+                    style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey[800],
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    '输入对方的用户ID发送好友请求',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Colors.grey[500],
+                    ),
+                  ),
+                  SizedBox(height: 32),
+                  TextFormField(
+                    controller: _contactIdController,
+                    decoration: InputDecoration(
+                      labelText: '联系人ID',
+                      prefixIcon: Icon(Icons.person_outline, color: Colors.grey[600]),
+                    ),
+                    validator: (value) {
+                      if (value!.isEmpty) {
+                        return '请输入联系人ID';
+                      }
+                      return null;
+                    },
+                  ),
+                  SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _addContact,
+                      child: _isLoading
+                          ? SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text('发送添加请求', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
