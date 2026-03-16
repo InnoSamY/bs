@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_base/screens/contacts_screen.dart';
 import 'package:flutter_base/services/call_service.dart';
@@ -165,13 +166,21 @@ class _CallScreenState extends State<CallScreen> {
                 shape: BoxShape.circle,
                 color: Colors.grey[800],
                 border: Border.all(color: Colors.grey[700]!, width: 2),
+                image: widget.contact.avatar.isNotEmpty
+                    ? DecorationImage(
+                        image: MemoryImage(base64Decode(widget.contact.avatar)),
+                        fit: BoxFit.cover,
+                      )
+                    : null,
               ),
-              child: Center(
-                child: Text(
-                  widget.contact.username[0].toUpperCase(),
-                  style: TextStyle(fontSize: 42, color: Colors.white, fontWeight: FontWeight.w300),
-                ),
-              ),
+              child: widget.contact.avatar.isEmpty
+                  ? Center(
+                      child: Text(
+                        widget.contact.username[0].toUpperCase(),
+                        style: TextStyle(fontSize: 42, color: Colors.white, fontWeight: FontWeight.w300),
+                      ),
+                    )
+                  : null,
             ),
             SizedBox(height: 24),
             Text(

@@ -61,6 +61,8 @@ class WebSocketService {
       return;
     }
 
+    final completer = Completer<void>();
+
     try {
       _isConnecting = true;
       print('WebSocket connecting...');
@@ -85,18 +87,26 @@ class WebSocketService {
         _reconnectAttempts = 0;
         _socket!.emit('register', userId);
         _startHeartbeat();
+        eventController.add({'type': 'connection-status', 'connected': true});
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
       });
 
       _socket!.onDisconnect((_) {
         print('WebSocket 断开连接');
         _isConnecting = false;
         _stopHeartbeat();
+        eventController.add({'type': 'connection-status', 'connected': false});
         _attemptReconnect();
       });
 
       _socket!.onConnectError((error) {
         print('WebSocket 连接错误: $error');
         _isConnecting = false;
+        if (!completer.isCompleted) {
+          completer.completeError('连接错误: $error');
+        }
         _attemptReconnect();
       });
 
@@ -147,6 +157,12 @@ class WebSocketService {
           'type': 'candidate',
           'candidate': data['candidate'],
         }});
+      });
+
+      return completer.future.timeout(Duration(seconds: 10), onTimeout: () {
+        if (!completer.isCompleted) {
+          completer.complete();
+        }
       });
 
     } catch (e) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_base/services/auth_service.dart';
 import 'package:flutter_base/services/contact_service.dart';
@@ -39,6 +41,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
   bool _isLoading = false;
   String? _currentUserId;
   String? _currentUsername;
+  StreamSubscription? _connectionSubscription;
 
   @override
   void initState() {
@@ -70,6 +73,14 @@ class _ContactsScreenState extends State<ContactsScreen> {
       _callService.videoEvent();
       _callService.setOnIncomingCall(_handleIncomingCall);
       print('WebSocket 连接成功');
+      _connectionSubscription = _webSocketService.eventStream.listen((_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
       print('WebSocket 连接失败: $e');
       if (mounted) {
@@ -230,6 +241,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
   @override
   void dispose() {
+    _connectionSubscription?.cancel();
     _webSocketService.disconnect();
     _callService.dispose();
     super.dispose();
@@ -332,17 +344,25 @@ class _ContactsScreenState extends State<ContactsScreen> {
                               decoration: BoxDecoration(
                                 color: Colors.grey[200],
                                 shape: BoxShape.circle,
+                                image: contact.avatar.isNotEmpty
+                                    ? DecorationImage(
+                                        image: MemoryImage(base64Decode(contact.avatar)),
+                                        fit: BoxFit.cover,
+                                      )
+                                    : null,
                               ),
-                              child: Center(
-                                child: Text(
-                                  contact.username[0].toUpperCase(),
-                                  style: TextStyle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w500,
-                                    color: Colors.grey[700],
-                                  ),
-                                ),
-                              ),
+                              child: contact.avatar.isEmpty
+                                  ? Center(
+                                      child: Text(
+                                        contact.username[0].toUpperCase(),
+                                        style: TextStyle(
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w500,
+                                          color: Colors.grey[700],
+                                        ),
+                                      ),
+                                    )
+                                  : null,
                             ),
                             title: Text(
                               contact.username,
