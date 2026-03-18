@@ -13,7 +13,7 @@ router.get('/', authMiddleware, async (req, res) => {
     const contacts = await Contact.find({
       userId,
       status: 'accepted'
-    }).populate('contactId', 'username avatar bio publicKey');
+    }).populate('contactId', 'username avatar bio publicKey encryptionPublicKey signaturePublicKey');
 
     // 格式化返回数据
     const formattedContacts = contacts.map(contact => ({
@@ -22,6 +22,8 @@ router.get('/', authMiddleware, async (req, res) => {
       avatar: contact.contactId.avatar,
       bio: contact.contactId.bio,
       publicKey: contact.contactId.publicKey,
+      kemPublicKey: contact.contactId.encryptionPublicKey,
+      sigPublicKey: contact.contactId.signaturePublicKey,
       addedAt: contact.createdAt
     }));
 
@@ -74,6 +76,8 @@ router.get('/search', authMiddleware, async (req, res) => {
       avatar: user.avatar,
       bio: user.bio,
       publicKey: user.publicKey,
+      kemPublicKey: user.encryptionPublicKey,
+      sigPublicKey: user.signaturePublicKey,
       isContact: contactIds.has(user._id.toString()),
       createdAt: user.createdAt
     }));
@@ -350,6 +354,52 @@ router.delete('/:contactId', authMiddleware, async (req, res) => {
     res.status(500).json({
       success: false,
       message: '删除联系人失败',
+      error: error.message
+    });
+  }
+});
+
+// 获取联系人详情
+router.get('/:contactId', authMiddleware, async (req, res) => {
+  try {
+    const { contactId } = req.params;
+    const userId = req.userId;
+
+    // 验证是否为联系人关系
+    const contact = await Contact.findOne({
+      userId,
+      contactId,
+      status: 'accepted'
+    }).populate('contactId', 'username avatar bio publicKey encryptionPublicKey signaturePublicKey');
+
+    if (!contact) {
+      return res.status(404).json({
+        success: false,
+        message: '联系人不存在'
+      });
+    }
+
+    // 格式化返回数据
+    const contactData = {
+      id: contact.contactId._id.toString(),
+      username: contact.contactId.username,
+      avatar: contact.contactId.avatar,
+      bio: contact.contactId.bio,
+      publicKey: contact.contactId.publicKey,
+      kemPublicKey: contact.contactId.encryptionPublicKey,
+      sigPublicKey: contact.contactId.signaturePublicKey,
+      addedAt: contact.createdAt
+    };
+
+    res.json({
+      success: true,
+      data: contactData
+    });
+  } catch (error) {
+    console.error('获取联系人详情错误:', error);
+    res.status(500).json({
+      success: false,
+      message: '获取联系人详情失败',
       error: error.message
     });
   }

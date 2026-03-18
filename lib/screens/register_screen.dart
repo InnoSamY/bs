@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_base/services/auth_service.dart';
-import 'package:flutter_base/services/crypto_service.dart';
 import 'package:flutter_base/screens/login_screen.dart';
 import 'dart:io';
 
@@ -16,7 +15,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _passwordController = TextEditingController();
   final _bioController = TextEditingController();
   final _authService = AuthService();
-  final _cryptoService = CryptoService();
   File? _avatarFile;
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -47,15 +45,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       });
 
       try {
-        final keyPair = _cryptoService.generateKeyPair();
-        String publicKey = keyPair['publicKey']!;
-
         final user = await _authService.register(
           username: _usernameController.text.trim(),
           password: _passwordController.text.trim(),
           avatar: _avatarFile?.path ?? '',
           bio: _bioController.text.trim(),
-          publicKey: publicKey,
         );
 
         showDialog(

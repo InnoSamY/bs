@@ -12,7 +12,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 /// 4. 事件广播
 /// 
 /// 支持的事件：
-/// - video: 视频信令
+/// - audio: 音频信令
 /// - incoming-call: 来电
 /// - call-accepted: 通话被接受
 /// - call-rejected: 通话被拒绝
@@ -114,14 +114,14 @@ class WebSocketService {
         print('WebSocket错误: $error');
       });
 
-      _socket!.on('video', (data) {
-        print('收到视频信令: $data');
-        eventController.add({'type': 'on-receive-video', 'content': data});
+      _socket!.on('audio', (data) {
+        print('收到音频信令: $data');
+        eventController.add({'type': 'on-receive-audio', 'content': data});
       });
 
       _socket!.on('incoming-call', (data) {
         print('收到来电: $data');
-        eventController.add({'type': 'on-receive-video', 'content': {
+        eventController.add({'type': 'on-receive-audio', 'content': {
           'type': 'invite',
           'fromUserId': data['callerId'],
           'callType': data['callType'],
@@ -130,7 +130,7 @@ class WebSocketService {
 
       _socket!.on('call-accepted', (data) {
         print('通话被接受: $data');
-        eventController.add({'type': 'on-receive-video', 'content': {
+        eventController.add({'type': 'on-receive-audio', 'content': {
           'type': 'accept',
           'answer': data['answer'],
         }});
@@ -138,7 +138,7 @@ class WebSocketService {
 
       _socket!.on('call-rejected', (data) {
         print('通话被拒绝: $data');
-        eventController.add({'type': 'on-receive-video', 'content': {
+        eventController.add({'type': 'on-receive-audio', 'content': {
           'type': 'hangup',
           'reason': data['reason'],
         }});
@@ -146,14 +146,14 @@ class WebSocketService {
 
       _socket!.on('call-ended', (data) {
         print('通话结束: $data');
-        eventController.add({'type': 'on-receive-video', 'content': {
+        eventController.add({'type': 'on-receive-audio', 'content': {
           'type': 'hangup',
         }});
       });
 
       _socket!.on('ice-candidate', (data) {
         print('收到ICE候选者: $data');
-        eventController.add({'type': 'on-receive-video', 'content': {
+        eventController.add({'type': 'on-receive-audio', 'content': {
           'type': 'candidate',
           'candidate': data['candidate'],
         }});

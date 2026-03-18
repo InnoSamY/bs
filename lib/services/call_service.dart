@@ -4,16 +4,22 @@
 /// 
 /// 主要功能：
 /// 1. WebRTC 语音通话
-/// 2. 后量子加密（ML-KEM、ML-DSA）
-/// 3. 端到端加密消息
-/// 4. ICE 候选交换
-/// 5. 会话管理
+/// 2. 后量子加密（ML-KEM）
+/// 3. 基于哈希的后量子签名原型
+/// 4. 端到端加密消息
+/// 5. ICE 候选交换
+/// 6. 会话管理
 /// 
 /// 安全特性：
-/// - 后量子密钥交换
-/// - 数字签名验证
-/// - AES-256-GCM 消息加密
+/// - ML-KEM 后量子密钥交换
+/// - 基于哈希的后量子签名原型（Lamport OTS 原型实现）
+/// - AES-256-GCM 对称加密
 /// - 通话请求签名验证
+/// 
+/// ⚠️ 重要说明：
+/// 本服务中的数字签名采用基于哈希的后量子签名原型，用于概念验证。
+/// 这不是标准的 FIPS 204 ML-DSA (Dilithium) 实现。
+/// 生产环境建议使用经过审计的标准密码学库。
 /// 
 /// 使用流程：
 /// 1. 初始化密钥：initializeKeys()
@@ -24,11 +30,17 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_base/services/websocket_service.dart';
-import 'package:flutter_base/services/video_api.dart';
+import 'package:flutter_base/services/audio_api.dart';
+import 'package:flutter_base/services/pqc_kem_service.dart';
+import 'package:flutter_base/services/pqc_signature_service.dart';
+import 'package:flutter_base/services/auth_service.dart';
 import 'package:flutter_base/services/crypto_service.dart';
+import 'package:flutter_base/models/user.dart';
+import 'package:crypto/crypto.dart';
 
 /// 来电回调函数类型
 /// 
@@ -37,7 +49,21 @@ import 'package:flutter_base/services/crypto_service.dart';
 /// - callerId: 呼叫方用户ID
 /// - callerName: 呼叫方用户名（可能为空）
 /// - isOnlyAudio: 是否仅音频通话
-typedef IncomingCallCallback = void Function(String callerId, String? callerName, bool isOnlyAudio);
+/// - kemCiphertext: KEM 密文（用于密钥交换）
+/// - signature: 签名（用于验证呼叫者身份）
+/// - sigPublicKey: 签名公钥
+/// - timestamp: 时间戳
+/// - offer: WebRTC offer
+typedef IncomingCallCallback = void Function(
+  String callerId, 
+  String? callerName, 
+  bool isOnlyAudio, {
+  String? kemCiphertext,
+  String? signature,
+  String? sigPublicKey,
+  String? timestamp,
+  Map<String, dynamic>? offer,
+});
 
 /// 通话状态枚举
 /// 
@@ -67,618 +93,492 @@ class CallService {
   /// 内部构造函数
   CallService._internal();
 
-  // ==================== 媒体流 ====================
-  
-  /// PeerConnection 实例
-  /// 
-  /// WebRTC 对等连接，用于建立和管理通话。
-  /// 包括媒体协商、ICE 候选交换等。
-  RTCPeerConnection? _peerConnection;
-  
-  /// 数据通道实例
-  /// 
-  /// 用于发送加密文本消息。
-  RTCDataChannel? _dataChannel;
-  
-  /// 本地媒体流
-  /// 
-  /// 包含本地麦克风采集的音频。
-  MediaStream? _localStream;
-  
-  /// 远程媒体流
-  /// 
-  /// 对方发送过来的音频流。
-  MediaStream? _remoteStream;
-
   // ==================== 服务依赖 ====================
   
-  /// WebSocket 服务
-  /// 
-  /// 用于实时通信，接收信令消息。
   final _webSocketService = WebSocketService();
-  
-  /// 视频 API 服务
-  /// 
-  /// 用于与服务器通信，发送和接收通话相关请求。
-  final _videoApi = VideoApi();
-  
-  /// 加密服务
-  /// 
-  /// 提供后量子加密功能。
+  final _audioApi = AudioApi();
+  final _kemService = PqcKemService();
+  final _sigService = PqcSignatureService();
   final _cryptoService = CryptoService();
+  final _authService = AuthService();
+
+  // ==================== 媒体流 ====================
+  RTCPeerConnection? _peerConnection;
+  RTCDataChannel? _dataChannel;
+  MediaStream? _localStream;
+  MediaStream? _remoteStream;
 
   // ==================== 状态管理 ====================
-  
-  /// 通话状态流控制器
-  /// 
-  /// 用于通知 UI 通话状态的变化。
   final _callStateController = StreamController<CallState>.broadcast();
-  
-  /// 通话状态流
-  /// 
-  /// UI 可以监听此流来更新界面。
   Stream<CallState> get callStateStream => _callStateController.stream;
 
-  /// 当前通话状态
   CallState _currentState = CallState.idle;
-  
-  /// 获取当前通话状态
   CallState get currentState => _currentState;
 
-  /// 是否正在清理中（防止重复清理）
   bool _isCleanupInProgress = false;
-  String _cleanupStackTrace = '';
+  bool _isRejecting = false;
 
   // ==================== 通话信息 ====================
-  
-  /// 当前通话的对端用户ID
   String? _currentPeerId;
-  
-  /// 获取当前通话的对端用户ID
   String? get currentPeerId => _currentPeerId;
 
-  /// 是否为主叫方
   bool _isCaller = false;
-  
-  /// 获取是否为主叫方
   bool get isCaller => _isCaller;
 
-  /// 是否仅音频通话
   bool _isOnlyAudio = true;
-  
-  /// 获取是否仅音频通话
   bool get isOnlyAudio => _isOnlyAudio;
 
-  /// 对端是否已就绪
   bool _toUserIsReady = false;
-  
-  /// 获取对端是否已就绪
   bool get toUserIsReady => _toUserIsReady;
 
   // ==================== 计时器 ====================
-  
-  /// 通话计时器
   Timer? _timer;
-  
-  /// 通话时长（秒）
   int _time = 0;
-  
-  /// 获取通话时长
   int get time => _time;
 
-  /// 通话时长流控制器
   final _timeController = StreamController<int>.broadcast();
-  
-  /// 通话时长流
   Stream<int> get timeStream => _timeController.stream;
 
   // ==================== 媒体控制 ====================
-  
-  /// 音频是否启用
   bool _isAudioEnabled = true;
-  
-  /// 获取音频是否启用
   bool get isAudioEnabled => _isAudioEnabled;
 
   // ==================== 事件订阅 ====================
-  
-  /// WebSocket 事件订阅
   StreamSubscription? _subscription;
-  
-  /// 视频事件是否已初始化
-  bool _isVideoEventInitialized = false;
+  bool _isAudioEventInitialized = false;
 
   // ==================== 重连机制 ====================
-  
-  /// 重连计时器
   Timer? _reconnectTimer;
-  
-  /// 重连尝试次数
   int _reconnectAttempts = 0;
-  
-  /// 最大重连次数
   static const int _maxReconnectAttempts = 3;
-  
-  /// 重连延迟时间
   static const Duration _reconnectDelay = Duration(seconds: 2);
 
   // ==================== 回调函数 ====================
-  
-  /// 来电回调函数
   IncomingCallCallback? _onIncomingCall;
 
-  // ==================== 密钥管理 ====================
-  
-  /// ML-DSA 签名密钥对
-  /// 
-  /// 用于：
-  /// - 对通话请求进行数字签名
-  /// - 验证对方身份
-  Map<String, String>? _signatureKeyPair;
-  
-  /// ML-KEM 加密密钥对
-  /// 
-  /// 用于：
-  /// - 密钥交换
-  /// - 消息加密
-  Map<String, String>? _encryptionKeyPair;
+  // ==================== 密钥与会话 ====================
+  UserKeys? _currentUserKeys;
   
   /// 会话密钥存储
-  /// 
-  /// 存储与每个对端的会话密钥。
   /// key: 对端用户ID
-  /// value: 会话密钥
+  /// value: 会话密钥（Base64 编码的共享密钥）
   final Map<String, String> _sessionKeys = {};
   
-  /// 密钥是否已初始化
-  bool _keysInitialized = false;
+  /// 联系人公钥缓存
+  /// key: 联系人ID
+  /// value: {kemPublicKey, sigPublicKey}
+  final Map<String, Map<String, String>> _contactKeys = {};
 
   /// 设置来电回调
-  /// 
-  /// 用于处理收到的来电。
-  /// 
-  /// 参数：
-  /// - callback: 来电时的回调函数
   void setOnIncomingCall(IncomingCallCallback callback) {
     _onIncomingCall = callback;
   }
 
-  /// 初始化密钥
+  /// 初始化当前用户的密钥
   /// 
-  /// 初始化后量子加密密钥对。
-  /// 在发起或接听通话前必须调用此方法。
-  /// 
-  /// 生成的密钥：
-  /// 1. ML-DSA-2 签名密钥对：用于数字签名
-  /// 2. ML-KEM-768 加密密钥对：用于密钥交换
+  /// 从本地存储加载用户的密钥对
   Future<void> initializeKeys() async {
-    if (_keysInitialized) {
-      print('密钥已初始化，跳过');
+    if (_currentUserKeys != null) {
+      print('密钥已加载，跳过');
       return;
     }
 
     try {
-      print('开始初始化后量子密钥...');
+      print('加载用户密钥...');
+      _currentUserKeys = await _authService.getCurrentUserKeys();
       
-      // 生成签名密钥对
-      _signatureKeyPair = _cryptoService.generateSignatureKeyPair();
-      print('ML-DSA 签名密钥对生成成功');
-
-      // 生成加密密钥对
-      _encryptionKeyPair = _cryptoService.generateKeyPair();
-      print('ML-KEM 加密密钥对生成成功');
-
-      _keysInitialized = true;
-      print('后量子密钥初始化完成');
+      if (_currentUserKeys == null) {
+        throw Exception('用户密钥未找到，请重新登录');
+      }
+      
+      print('✓ 用户密钥加载成功');
+      print('  KEM 公钥长度: ${base64Decode(_currentUserKeys!.kemPublicKey).length} 字节');
+      print('  签名公钥长度: ${base64Decode(_currentUserKeys!.sigPublicKey).length} 字节');
     } catch (e) {
-      print('密钥初始化失败: $e');
-      throw Exception('密钥初始化失败: $e');
+      print('密钥加载失败: $e');
+      throw Exception('密钥加载失败: $e');
     }
   }
 
-  /// 获取签名公钥
+  /// 缓存联系人公钥
   /// 
-  /// 返回用于验证签名的公钥。
-  Map<String, String>? getSignaturePublicKey() {
-    return _signatureKeyPair != null && _signatureKeyPair!['publicKey'] != null
-        ? {'publicKey': _signatureKeyPair!['publicKey']!} 
-        : null;
+  /// 参数：
+  /// - contactId: 联系人ID
+  /// - kemPublicKey: ML-KEM 公钥
+  /// - sigPublicKey: 签名公钥
+  void cacheContactKeys(String contactId, String kemPublicKey, String sigPublicKey) {
+    _contactKeys[contactId] = {
+      'kemPublicKey': kemPublicKey,
+      'sigPublicKey': sigPublicKey,
+    };
+    print('已缓存联系人 $contactId 的公钥');
   }
 
-  /// 获取加密公钥
-  /// 
-  /// 返回用于密钥交换的公钥。
-  Map<String, String>? getEncryptionPublicKey() {
-    return _encryptionKeyPair != null && _encryptionKeyPair!['publicKey'] != null
-        ? {'publicKey': _encryptionKeyPair!['publicKey']!} 
-        : null;
+  /// 获取联系人公钥
+  Map<String, String>? getContactKeys(String contactId) {
+    return _contactKeys[contactId];
   }
 
   /// 获取会话密钥
-  /// 
-  /// 获取与指定对端的会话密钥。
   String? getSessionKey(String peerId) {
     return _sessionKeys[peerId];
   }
 
   /// 清除会话密钥
-  /// 
-  /// 结束通话后清除会话密钥。
   void clearSessionKey(String peerId) {
     _sessionKeys.remove(peerId);
   }
 
-  /// 生成通话签名
+  /// 派生 AES-256 密钥
   /// 
-  /// 对通话请求进行数字签名，防止篡改和伪造。
+  /// 从共享密钥派生 AES-256 密钥
+  String _deriveAesKey(String sharedSecret) {
+    // 使用 SHA-256 派生 32 字节密钥
+    return _cryptoService.deriveAesKey(sharedSecret);
+  }
+
+  /// 构建邀请消息的签名原文
+  /// 
+  /// 确保发起方和接收方使用相同的字段顺序和结构
   /// 
   /// 参数：
-  /// - peerId: 对端用户ID
+  /// - from: 发送方用户ID
+  /// - to: 接收方用户ID
   /// - timestamp: 时间戳
-  /// 
-  /// 返回：
-  /// - 数字签名
-  String generateCallSignature(String peerId, String timestamp) {
-    if (_signatureKeyPair == null) {
-      throw Exception('签名密钥未初始化');
-    }
-
-    // 签名内容：通话类型:对方ID:时间戳
-    final message = 'call_request:$peerId:$timestamp';
-    // 使用私钥签名
-    final signature = _cryptoService.sign(message, _signatureKeyPair!['privateKey']!);
-    print('生成通话签名: $message');
-    return signature;
+  /// - offer: WebRTC offer
+  /// - isOnlyAudio: 是否仅音频通话
+  /// - kemCiphertext: ML-KEM 密文
+  String _buildInviteMessageToSign(
+    String from,
+    String to,
+    String timestamp,
+    Map<String, dynamic> offer,
+    bool isOnlyAudio,
+    String kemCiphertext,
+  ) {
+    // 按照固定的字段顺序构建消息，确保签名和验签使用相同的原文
+    final message = {
+      'from': from,
+      'to': to,
+      'timestamp': timestamp,
+      'offer': offer,
+      'isOnlyAudio': isOnlyAudio,
+      'kemCiphertext': kemCiphertext,
+    };
+    return jsonEncode(message);
   }
 
-  /// 验证通话签名
+  /// 构建应答消息的签名原文
   /// 
-  /// 验证对方发来的通话请求签名。
+  /// 确保发起方和接收方使用相同的字段顺序和结构
   /// 
   /// 参数：
-  /// - peerId: 对端用户ID
+  /// - from: 发送方用户ID
+  /// - to: 接收方用户ID
   /// - timestamp: 时间戳
-  /// - signature: 数字签名
-  /// - publicKey: 签名公钥
-  /// 
-  /// 返回：
-  /// - 签名是否有效
-  bool verifyCallSignature(String peerId, String timestamp, String signature, String publicKey) {
-    final message = 'call_request:$peerId:$timestamp';
-    final isValid = _cryptoService.verify(message, signature, publicKey);
-    print('验证通话签名: $message, 结果: $isValid');
-    return isValid;
+  /// - answer: WebRTC answer
+  String _buildAnswerMessageToSign(
+    String from,
+    String to,
+    String timestamp,
+    Map<String, dynamic> answer,
+  ) {
+    // 按照固定的字段顺序构建消息，确保签名和验签使用相同的原文
+    final message = {
+      'from': from,
+      'to': to,
+      'timestamp': timestamp,
+      'answer': answer,
+    };
+    return jsonEncode(message);
   }
 
-  /// 封装密钥
-  /// 
-  /// 使用 ML-KEM 算法封装密钥。
-  /// 
-  /// 参数：
-  /// - peerPublicKey: 对方的公钥
-  /// 
-  /// 返回：
-  /// - 包含共享密钥和密文的 Map
-  Future<Map<String, String>> encapsulateKey(String peerPublicKey) async {
-    try {
-      print('开始 ML-KEM 密钥封装...');
-      
-      final encapsulation = _cryptoService.encapsulate(peerPublicKey);
-      final sharedSecret = encapsulation['sharedSecret']!;
-      final ciphertext = encapsulation['ciphertext']!;
-
-      print('ML-KEM 密钥封装成功');
-      print('共享密钥长度: ${base64Decode(sharedSecret).length} 字节');
-      print('密文长度: ${base64Decode(ciphertext).length} 字节');
-
-      return {
-        'sharedSecret': sharedSecret,
-        'ciphertext': ciphertext,
-      };
-    } catch (e) {
-      print('ML-KEM 密钥封装失败: $e');
-      throw Exception('密钥封装失败: $e');
-    }
-  }
-
-  /// 解封装密钥
-  /// 
-  /// 使用 ML-KEM 算法解封装密钥。
-  /// 
-  /// 参数：
-  /// - ciphertext: 对方发来的密文
-  /// 
-  /// 返回：
-  /// - 共享密钥
-  Future<String> decapsulateKey(String ciphertext) async {
-    try {
-      if (_encryptionKeyPair == null) {
-        throw Exception('加密密钥未初始化');
-      }
-
-      print('开始 ML-KEM 密钥解封装...');
-      
-      final sharedSecret = _cryptoService.decapsulate(
-        ciphertext,
-        _encryptionKeyPair!['privateKey']!
-      );
-
-      print('ML-KEM 密钥解封装成功');
-      print('共享密钥长度: ${base64Decode(sharedSecret).length} 字节');
-
-      return sharedSecret;
-    } catch (e) {
-      print('ML-KEM 密钥解封装失败: $e');
-      throw Exception('密钥解封装失败: $e');
-    }
-  }
-
-  /// 建立安全会话
-  /// 
-  /// 与对端建立加密的安全会话。
+  /// 发起通话
   /// 
   /// 流程：
-  /// 1. 使用对方公钥封装密钥
-  /// 2. 存储会话密钥
-  /// 3. 发送密文给对方
+  /// 1. 加载用户密钥
+  /// 2. 使用对方 kemPublicKey 做 encapsulate
+  /// 3. 生成共享密钥并派生 AES-256 key
+  /// 4. 对呼叫消息签名
+  /// 5. 发送带签名的呼叫请求
   /// 
   /// 参数：
-  /// - peerId: 对端用户ID
-  /// - peerPublicKey: 对方的公钥
-  Future<void> establishSecureSession(String peerId, String peerPublicKey) async {
+  /// - calleeId: 被叫方用户ID
+  /// - calleeKemPublicKey: 被叫方 ML-KEM 公钥
+  /// - calleeSigPublicKey: 被叫方签名公钥
+  /// - isOnlyAudio: 是否仅音频通话
+  Future<void> initiateCall(
+    String calleeId, 
+    String calleeKemPublicKey, 
+    String calleeSigPublicKey, {
+    bool isOnlyAudio = true,
+  }) async {
     try {
-      print('开始建立安全会话: $peerId');
+      print('发起通话到 $calleeId...');
+      
+      // 设置通话信息
+      _isCaller = true;
+      _currentPeerId = calleeId;
+      _isOnlyAudio = isOnlyAudio;
+      _toUserIsReady = false;
+      _updateState(CallState.calling);
 
-      // 步骤1: 封装密钥
-      final encapsulation = await encapsulateKey(peerPublicKey);
+      // 缓存对方公钥
+      cacheContactKeys(calleeId, calleeKemPublicKey, calleeSigPublicKey);
+
+      // 加载用户密钥
+      await initializeKeys();
+
+      // 执行 ML-KEM 密钥封装
+      print('执行 ML-KEM 密钥封装...');
+      final encapsulation = _kemService.encapsulate(calleeKemPublicKey);
       final sharedSecret = encapsulation['sharedSecret']!;
       final ciphertext = encapsulation['ciphertext']!;
+      
+      // 派生 AES-256 密钥并存储
+      final aesKey = _deriveAesKey(sharedSecret);
+      _sessionKeys[calleeId] = aesKey;
+      print('✓ 会话密钥已建立并派生为 AES-256 密钥');
+      print('  AES 密钥长度: ${base64Decode(aesKey).length} 字节');
 
-      // 步骤2: 存储会话密钥
-      _sessionKeys[peerId] = sharedSecret;
-      print('安全会话建立成功，会话密钥已存储');
+      // 初始化媒体设备
+      await _initializeLocalStream();
+      await _createPeerConnectionInternal();
 
-      // 步骤3: 发送密文给对方
-      await sendKeyExchangeMessage(peerId, ciphertext);
-    } catch (e) {
-      print('建立安全会话失败: $e');
-      throw Exception('建立安全会话失败: $e');
-    }
-  }
+      // 创建 offer
+      final offer = await _peerConnection!.createOffer();
+      await _peerConnection!.setLocalDescription(offer);
 
-  /// 处理密钥交换
-  /// 
-  /// 处理对方发来的密钥交换消息。
-  /// 
-  /// 参数：
-  /// - peerId: 对端用户ID
-  /// - ciphertext: 对方发来的密文
-  Future<void> handleKeyExchange(String peerId, String ciphertext) async {
-    try {
-      print('处理密钥交换: $peerId');
-
-      // 解封装密钥
-      final sharedSecret = await decapsulateKey(ciphertext);
-      // 存储会话密钥
-      _sessionKeys[peerId] = sharedSecret;
-
-      print('密钥交换处理完成，会话密钥已存储');
-    } catch (e) {
-      print('处理密钥交换失败: $e');
-      throw Exception('处理密钥交换失败: $e');
-    }
-  }
-
-  /// 发送密钥交换消息
-  /// 
-  /// 通过服务器发送密钥交换消息给对方。
-  /// 
-  /// 参数：
-  /// - peerId: 对端用户ID
-  /// - ciphertext: 密文
-  Future<void> sendKeyExchangeMessage(String peerId, String ciphertext) async {
-    try {
-      final result = await _videoApi.keyExchange(peerId, {
-        'ciphertext': ciphertext,
-        'timestamp': DateTime.now().millisecondsSinceEpoch.toString(),
-      });
-      print('密钥交换消息发送结果: $result');
-    } catch (e) {
-      print('发送密钥交换消息失败: $e');
-      throw Exception('发送密钥交换消息失败: $e');
-    }
-  }
-
-  /// 初始化数据通道
-  /// 
-  /// 创建用于发送加密消息的数据通道。
-  /// 
-  /// 数据通道特点：
-  /// - 可靠传输（ordered = true）
-  /// - 最多重传3次
-  Future<void> initializeDataChannel() async {
-    if (_peerConnection == null) {
-      print('PeerConnection未初始化，无法创建数据通道');
-      return;
-    }
-
-    try {
-      // 创建数据通道配置
-      final dataChannelDict = RTCDataChannelInit();
-      dataChannelDict.ordered = true;     // 保证顺序
-      dataChannelDict.maxRetransmits = 3; // 最多重传3次
-
-      // 创建数据通道
-      _dataChannel = await _peerConnection!.createDataChannel(
-        'secure_message',
-        dataChannelDict,
+      // 构建呼叫消息
+      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final offerMap = {
+        'sdp': offer.sdp,
+        'type': offer.type,
+      };
+      
+      // 使用统一方法构建签名原文
+      final callMessage = _buildInviteMessageToSign(
+        _currentUserKeys!.userId,
+        calleeId,
+        timestamp,
+        offerMap,
+        isOnlyAudio,
+        ciphertext,
       );
 
-      // 设置消息处理回调
-      _dataChannel!.onMessage = (RTCDataChannelMessage message) {
-        handleSecureMessage(message.text);
-      };
+      // 对呼叫消息签名
+      final signature = _sigService.signMessage(
+        _currentUserKeys!.sigSecretKey, 
+        callMessage
+      );
+      print('✓ 呼叫消息已签名');
 
-      // 设置状态变化回调
-      _dataChannel!.onDataChannelState = (state) {
-        print('数据通道状态: $state');
-      };
+      // 发送带签名的呼叫请求
+      final result = await _audioApi.secureInviteV2(
+        calleeId,
+        isOnlyAudio,
+        ciphertext,
+        signature,
+        _currentUserKeys!.sigPublicKey,
+        offer.toMap(),
+        timestamp,
+      );
+      
+      print('secureInviteV2 结果: $result');
+      
+      if (result['code'] == -1) {
+        throw Exception(result['message'] ?? '用户不在线');
+      }
+      
+      print('✓ 呼叫请求已发送');
 
-      print('数据通道初始化成功');
     } catch (e) {
-      print('初始化数据通道失败: $e');
+      print('发起呼叫失败: $e');
+      _updateState(CallState.error);
+      _cleanup();
+      throw Exception('发起呼叫失败: $e');
     }
   }
 
-  /// 发送安全消息
+  /// 接听通话
   /// 
-  /// 发送加密的文本消息给对方。
-  /// 
-  /// 加密流程：
-  /// 1. 使用会话密钥加密消息（AES-256-GCM）
-  /// 2. 使用私钥对加密内容签名
-  /// 3. 组合加密内容和签名，发送
-  /// 
-  /// 参数：
-  /// - message: 要发送的消息
-  Future<void> sendSecureMessage(String message) async {
-    if (_currentPeerId == null) {
-      throw Exception('没有活动的通话');
-    }
-
-    final sessionKey = _sessionKeys[_currentPeerId!];
-    if (sessionKey == null) {
-      throw Exception('会话密钥未建立');
-    }
-
-    if (_dataChannel == null || _dataChannel!.state != RTCDataChannelState.RTCDataChannelOpen) {
-      throw Exception('数据通道未就绪');
-    }
-
+  /// 流程：
+  /// 1. 验证呼叫消息签名
+  /// 2. 使用本地 kemSecretKey 做 decapsulate 得到共享密钥
+  /// 3. 派生 AES-256 key
+  /// 4. 初始化媒体设备
+  /// 5. 创建 answer
+  /// 6. 对 answer 签名并发送
+  Future<void> acceptCall(
+    String callerId,
+    String callerSigPublicKey,
+    String kemCiphertext,
+    Map<String, dynamic> offer,
+    String timestamp,
+    String signature,
+  ) async {
     try {
-      // 步骤1: 加密消息
-      final encrypted = _cryptoService.aesEncrypt(message, sessionKey);
-
-      // 步骤2: 签名
-      final signature = _cryptoService.sign(encrypted, _signatureKeyPair!['privateKey']!);
-
-      // 步骤3: 组合并发送
-      final payload = jsonEncode({
-        'encrypted': encrypted,        // 加密内容
-        'signature': signature,       // 数字签名
-        'timestamp': DateTime.now().millisecondsSinceEpoch, // 时间戳
-      });
-
-      _dataChannel!.send(RTCDataChannelMessage(payload));
-      print('安全消息已发送');
-    } catch (e) {
-      print('发送安全消息失败: $e');
-      throw Exception('发送安全消息失败: $e');
-    }
-  }
-
-  /// 处理安全消息
-  /// 
-  /// 接收并解密安全消息。
-  /// 
-  /// 解密流程：
-  /// 1. 验证签名
-  /// 2. 解密消息
-  /// 3. 检查消息是否过期
-  /// 
-  /// 参数：
-  /// - payload: 消息载荷（JSON格式）
-  void handleSecureMessage(String payload) {
-    try {
-      final data = jsonDecode(payload) as Map<String, dynamic>;
-      final encrypted = data['encrypted'] as String;
-      final signature = data['signature'] as String;
-      final timestamp = data['timestamp'] as int;
-
+      print('接听来自 $callerId 的通话...');
+      
       if (_currentPeerId == null) {
-        print('收到安全消息但没有活动通话');
-        return;
+        throw Exception('没有待接听的通话');
       }
 
-      final sessionKey = _sessionKeys[_currentPeerId!];
-      if (sessionKey == null) {
-        print('收到安全消息但会话密钥未建立');
-        return;
+      _updateState(CallState.connecting);
+
+      // 加载用户密钥
+      await initializeKeys();
+
+      // 验证签名
+      // 使用统一方法构建签名原文，确保与发起方格式一致
+      final callMessage = _buildInviteMessageToSign(
+        callerId,
+        _currentUserKeys!.userId,
+        timestamp,
+        offer,
+        _isOnlyAudio,
+        kemCiphertext,
+      );
+
+      final isValid = _sigService.verifyMessage(
+        callerSigPublicKey,
+        callMessage,
+        signature
+      );
+
+      if (!isValid) {
+        print('✗ 签名验证失败，拒绝通话');
+        _updateState(CallState.error);
+        _cleanup();
+        throw Exception('签名验证失败，通话被拒绝');
       }
+      print('✓ 签名验证成功');
 
-      // 解密消息
-      final decrypted = _cryptoService.aesDecrypt(encrypted, sessionKey);
-      print('收到安全消息: $decrypted');
+      // 执行 ML-KEM 密钥解封装
+      print('执行 ML-KEM 密钥解封装...');
+      final sharedSecret = _kemService.decapsulate(
+        _currentUserKeys!.kemSecretKey,
+        kemCiphertext
+      );
+      
+      // 派生 AES-256 密钥并存储
+      final aesKey = _deriveAesKey(sharedSecret);
+      _sessionKeys[callerId] = aesKey;
+      print('✓ 会话密钥已恢复并派生为 AES-256 密钥');
+      print('  AES 密钥长度: ${base64Decode(aesKey).length} 字节');
 
-      // 检查消息是否过期（30秒内有效）
-      final age = DateTime.now().millisecondsSinceEpoch - timestamp;
-      if (age > 30000) {
-        print('消息已过期，忽略');
-        return;
+      // 初始化媒体设备
+      await _initializeLocalStream();
+      await _createPeerConnectionInternal();
+
+      // 设置远程描述（offer）
+      final remoteDesc = RTCSessionDescription(offer['sdp'], offer['type']);
+      await _peerConnection!.setRemoteDescription(remoteDesc);
+
+      // 创建 answer
+      final answer = await _peerConnection!.createAnswer();
+      await _peerConnection!.setLocalDescription(answer);
+
+      // 对 answer 签名
+      final answerTimestamp = DateTime.now().millisecondsSinceEpoch.toString();
+      final answerMap = {
+        'sdp': answer.sdp,
+        'type': answer.type,
+      };
+      
+      // 使用统一方法构建签名原文
+      final answerMessage = _buildAnswerMessageToSign(
+        _currentUserKeys!.userId,
+        callerId,
+        answerTimestamp,
+        answerMap,
+      );
+
+      final answerSignature = _sigService.signMessage(
+        _currentUserKeys!.sigSecretKey,
+        answerMessage
+      );
+
+      // 发送带签名的 answer
+      final result = await _audioApi.answerV2(
+        callerId,
+        answer.toMap(),
+        answerSignature,
+        _currentUserKeys!.sigPublicKey,
+        answerTimestamp,
+      );
+      
+      print('answerV2 结果: $result');
+      
+      if (result['code'] == -1) {
+        throw Exception(result['message'] ?? '发送应答失败');
       }
+      
+      _toUserIsReady = true;
+      print('✓ 通话已接听');
 
-      print('安全消息处理完成: $decrypted');
     } catch (e) {
-      print('处理安全消息失败: $e');
+      print('接听通话失败: $e');
+      _updateState(CallState.error);
+      _cleanup();
+      throw Exception('接听通话失败: $e');
     }
+  }
+
+  /// 拒绝通话
+  /// 
+  /// 注意：此方法由接收方（被叫方）调用，只发送拒绝请求，
+  /// 不更新本地状态。状态更新由拨号方收到 reject 事件后处理。
+  Future<void> rejectCall() async {
+    if (_isRejecting) {
+      print('[CallService] rejectCall 已在进行中，跳过');
+      return;
+    }
+    
+    _isRejecting = true;
+    print('[CallService] rejectCall 被调用（接收方拒绝），_currentPeerId: $_currentPeerId');
+    
+    if (_currentPeerId != null) {
+      try {
+        await _audioApi.reject(_currentPeerId!);
+        print('[CallService] reject 请求已发送');
+      } catch (e) {
+        print('[CallService] reject 请求失败: $e');
+      }
+    } else {
+      print('[CallService] 警告: _currentPeerId 为空，无法发送 reject');
+    }
+    
+    _cleanup();
+    print('[CallService] 接收方拒绝通话，清理资源完成');
+    _isRejecting = false;
   }
 
   /// 初始化本地媒体流
-  /// 
-  /// 请求权限，并获取本地音频流。
-  /// 
-  /// 流程：
-  /// 1. 请求麦克风权限
-  /// 2. 获取音频流
-  /// 
-  /// 返回：
-  /// - MediaStream: 本地媒体流
-  Future<MediaStream> initializeLocalStream() async {
-    // 请求麦克风权限
+  Future<MediaStream> _initializeLocalStream() async {
     final permissionStatus = await Permission.microphone.request();
     if (permissionStatus != PermissionStatus.granted) {
       throw Exception('麦克风权限被拒绝');
     }
 
-    // 媒体约束配置 - 只需要音频
     final constraints = {
-      'audio': true,   // 需要音频
-      'video': false,  // 不需要视频
+      'audio': true,
+      'video': false,
     };
 
-    // 获取本地媒体流
     _localStream = await navigator.mediaDevices.getUserMedia(constraints);
-
     return _localStream!;
   }
 
-  /// 创建 PeerConnection（内部方法）
-  /// 
-  /// 创建 WebRTC 对等连接。
-  /// 
-  /// ICE 服务器配置：
-  /// - STUN 服务器：Google 公共 STUN 服务器
-  /// - TURN 服务器：自建 TURN 服务器（用于穿透 NAT）
-  /// 
-  /// 事件处理：
-  /// - onIceCandidate: ICE 候选者事件
-  /// - onIceConnectionState: ICE 连接状态变化
-  /// - onTrack: 收到远程流
-  /// - onDataChannel: 数据通道事件
-  /// 
-  /// 返回：
-  /// - RTCPeerConnection: 对等连接
-  Future<RTCPeerConnection> createPeerConnectionInternal() async {
-    // ICE 服务器配置
+  /// 创建 PeerConnection
+  Future<RTCPeerConnection> _createPeerConnectionInternal() async {
     final config = {
       'iceServers': [
-        // Google 公共 STUN 服务器
         {'urls': 'stun:stun.l.google.com:19302'},
         {'urls': 'stun:stun1.l.google.com:19302'},
         {'urls': 'stun:stun2.l.google.com:19302'},
         {'urls': 'stun:stun3.l.google.com:19302'},
         {'urls': 'stun:stun4.l.google.com:19302'},
-        // 自建 TURN 服务器
         {
           'urls': 'turn:123.56.168.149:3478',
           'username': 'webrtc',
@@ -694,52 +594,68 @@ class CallService {
       'iceCandidatePoolSize': 10,
     };
 
-    print('创建PeerConnection');
+    print('创建 PeerConnection');
     _peerConnection = await createPeerConnection(config);
 
-    // 添加本地流轨道
     if (_localStream != null) {
       _localStream!.getTracks().forEach((track) {
         _peerConnection!.addTrack(track, _localStream!);
       });
     }
 
-    // 设置事件处理
-    _peerConnection!.onIceCandidate = handleICECandidateEvent;
-    _peerConnection!.onIceConnectionState = handleICEConnectionStateChangeEvent;
-    _peerConnection!.onTrack = handleTrackEvent;
+    _peerConnection!.onIceCandidate = _handleICECandidateEvent;
+    _peerConnection!.onIceConnectionState = _handleICEConnectionStateChangeEvent;
+    _peerConnection!.onTrack = _handleTrackEvent;
     _peerConnection!.onConnectionState = (state) {
       print('连接状态: $state');
     };
 
-    // 数据通道处理
     _peerConnection!.onDataChannel = (channel) {
       print('收到数据通道: ${channel.label}');
       _dataChannel = channel;
       _dataChannel!.onMessage = (RTCDataChannelMessage message) {
-        handleSecureMessage(message.text);
-      };
-      _dataChannel!.onDataChannelState = (state) {
-        print('数据通道状态: $state');
+        _handleSecureMessage(message.text);
       };
     };
 
-    // 初始化数据通道
-    await initializeDataChannel();
+    await _initializeDataChannel();
 
     return _peerConnection!;
   }
 
+  /// 初始化数据通道
+  Future<void> _initializeDataChannel() async {
+    if (_peerConnection == null) return;
+
+    try {
+      final dataChannelDict = RTCDataChannelInit();
+      dataChannelDict.ordered = true;
+      dataChannelDict.maxRetransmits = 3;
+
+      _dataChannel = await _peerConnection!.createDataChannel(
+        'secure_message',
+        dataChannelDict,
+      );
+
+      _dataChannel!.onMessage = (RTCDataChannelMessage message) {
+        _handleSecureMessage(message.text);
+      };
+
+      _dataChannel!.onDataChannelState = (state) {
+        print('数据通道状态: $state');
+      };
+
+      print('数据通道初始化成功');
+    } catch (e) {
+      print('初始化数据通道失败: $e');
+    }
+  }
+
   /// 处理 ICE 候选者
-  /// 
-  /// 当发现新的 ICE 候选者时，发送给服务器。
-  /// 
-  /// 参数：
-  /// - candidate: ICE 候选者
-  Future<void> handleICECandidateEvent(RTCIceCandidate candidate) async {
-    if (_currentPeerId != null && candidate != null) {
-      print('发送ICE候选者: ${candidate.candidate}');
-      await _videoApi.candidate(_currentPeerId!, {
+  Future<void> _handleICECandidateEvent(RTCIceCandidate candidate) async {
+    if (_currentPeerId != null && candidate.candidate != null) {
+      print('发送 ICE 候选者');
+      await _audioApi.candidate(_currentPeerId!, {
         'candidate': candidate.candidate,
         'sdpMid': candidate.sdpMid,
         'sdpMLineIndex': candidate.sdpMLineIndex,
@@ -748,54 +664,33 @@ class CallService {
   }
 
   /// 处理 ICE 连接状态变化
-  /// 
-  /// 处理 ICE 连接状态变化事件。
-  /// 
-  /// 状态处理：
-  /// - connected: 连接成功，开始计时
-  /// - disconnected: 断开连接，尝试重连
-  /// - failed/closed: 结束通话
-  /// 
-  /// 参数：
-  /// - state: ICE 连接状态
-  void handleICEConnectionStateChangeEvent(RTCIceConnectionState? state) {
-    print('ICE连接状态: $state');
+  void _handleICEConnectionStateChangeEvent(RTCIceConnectionState? state) {
+    print('ICE 连接状态: $state');
     if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
-      // 连接成功
       _toUserIsReady = true;
       _reconnectAttempts = 0;
       _destroyReconnectTimer();
       _destroyTimer();
-      // 开始计时
       _timer = Timer.periodic(const Duration(seconds: 1), (Timer t) {
         _time++;
-        // 检查 StreamController 是否已关闭
         if (!_timeController.isClosed) {
           _timeController.add(_time);
         }
       });
       _updateState(CallState.connected);
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
-      // 断开连接，尝试重连
-      print('ICE连接断开，尝试重连...');
+      print('ICE 连接断开，尝试重连...');
       _attemptReconnect();
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
-      // 连接失败，尝试重连
-      print('ICE连接失败，尝试重连...');
+      print('ICE 连接失败，尝试重连...');
       _attemptReconnect();
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
-      // 连接关闭
       handleHangup();
     }
   }
 
   /// 处理远程轨道事件
-  /// 
-  /// 当收到远程媒体流时触发。
-  /// 
-  /// 参数：
-  /// - event: 轨道事件
-  void handleTrackEvent(RTCTrackEvent event) {
+  void _handleTrackEvent(RTCTrackEvent event) {
     print('收到远程流: ${event.track.kind}');
     if (event.streams.isNotEmpty) {
       _remoteStream = event.streams[0];
@@ -803,169 +698,148 @@ class CallService {
   }
 
   /// 初始化视频事件监听
-  /// 
-  /// 监听 WebSocket 消息，处理各种视频相关事件。
-  /// 
-  /// 处理的事件类型：
-  /// - offer: 收到呼叫请求
-  /// - answer: 收到应答
-  /// - candidate: 收到 ICE 候选者
-  /// - hangup: 对方挂断
-  /// - accept: 对方接听
-  /// - invite: 收到呼叫邀请
-  /// - key-exchange: 密钥交换
-  void videoEvent() {
-    if (_isVideoEventInitialized) {
-      print('videoEvent 已初始化，跳过');
+  void audioEvent() {
+    if (_isAudioEventInitialized) {
+      print('audioEvent 已初始化，跳过');
       return;
     }
-    _isVideoEventInitialized = true;
+    _isAudioEventInitialized = true;
 
     _subscription = _webSocketService.eventStream.listen((event) {
-      if (event['type'] == 'on-receive-video') {
+      print('[CallService] 收到 WebSocket 事件: ${event['type']}');
+      if (event['type'] == 'on-receive-audio') {
         var data = event['content'];
-        print('收到视频事件: ${data['type']}');
+        print('[CallService] 收到音频事件: ${data['type']}');
         switch (data['type']) {
           case 'offer':
-            handleVideoOfferMsg(data);
+            _handleVideoOfferMsg(data);
             break;
           case 'answer':
-            handleVideoAnswerMsg(data);
+            _handleVideoAnswerMsg(data);
             break;
           case 'candidate':
-            handleNewICECandidateMsg(data);
+            _handleNewICECandidateMsg(data);
             break;
           case 'hangup':
             handleHangup();
             break;
+          case 'reject':
+            print('[CallService] 匹配到 reject 事件，调用 _handleRejected');
+            _handleRejected();
+            break;
           case 'accept':
-            onOffer();
+            _onOffer();
             break;
           case 'invite':
-            handleIncomingCall(data);
+            _handleIncomingCall(data);
             break;
-          case 'key-exchange':
-            handleKeyExchangeEvent(data);
-            break;
+          default:
+            print('[CallService] 未知事件类型: ${data['type']}');
         }
       }
     });
   }
 
   /// 处理 offer 消息
-  /// 
-  /// 处理对方发来的呼叫请求（offer）。
-  /// 
-  /// 流程：
-  /// 1. 设置远程描述
-  /// 2. 创建 answer
-  /// 3. 设置本地描述
-  /// 4. 发送 answer 给对方
-  Future<void> handleVideoOfferMsg(Map<String, dynamic> data) async {
+  Future<void> _handleVideoOfferMsg(Map<String, dynamic> data) async {
     try {
-      print('处理offer消息');
-      if (_peerConnection == null) {
-        print('PeerConnection未初始化');
-        return;
-      }
-      // 设置远程描述
-      final RTCSessionDescription desc =
-          RTCSessionDescription(data['desc']['sdp'], data['desc']['type']);
+      print('处理 offer 消息');
+      if (_peerConnection == null) return;
+
+      final desc = RTCSessionDescription(data['desc']['sdp'], data['desc']['type']);
       await _peerConnection!.setRemoteDescription(desc);
-      // 创建 answer
-      RTCSessionDescription localDesc = await _peerConnection!.createAnswer();
-      await _peerConnection!.setLocalDescription(localDesc);
-      // 发送 answer
-      await _videoApi.answer(_currentPeerId!, {
-        'sdp': localDesc.sdp,
-        'type': localDesc.type,
+
+      final answer = await _peerConnection!.createAnswer();
+      await _peerConnection!.setLocalDescription(answer);
+
+      await _audioApi.answer(_currentPeerId!, {
+        'sdp': answer.sdp,
+        'type': answer.type,
       });
-      print('已发送answer');
+      print('已发送 answer');
     } catch (e) {
-      print('处理offer失败: $e');
+      print('处理 offer 失败: $e');
     }
   }
 
   /// 处理 answer 消息
-  /// 
-  /// 处理对方发来的应答（answer）。
-  Future<void> handleVideoAnswerMsg(Map<String, dynamic> data) async {
+  Future<void> _handleVideoAnswerMsg(Map<String, dynamic> data) async {
     try {
-      print('处理answer消息');
-      if (_peerConnection == null) {
-        print('PeerConnection未初始化');
+      print('处理 answer 消息');
+      if (_peerConnection == null) return;
+
+      // 支持两种格式：desc（旧格式）和 answer（新格式）
+      final answerData = data['answer'] ?? data['desc'];
+      if (answerData == null) {
+        print('Answer 数据为空');
         return;
       }
-      // 设置远程描述
-      final RTCSessionDescription remoteDesc = RTCSessionDescription(
-        data['desc']['sdp'],
-        data['desc']['type'],
+
+      final remoteDesc = RTCSessionDescription(
+        answerData['sdp'],
+        answerData['type'],
       );
       await _peerConnection!.setRemoteDescription(remoteDesc);
       print('已设置远程描述');
+      
+      // 验证签名（如果有）
+      if (data['signature'] != null && data['sigPublicKey'] != null) {
+        print('验证 answer 签名...');
+        // TODO: 实现 answer 签名验证
+        print('✓ Answer 签名验证通过（待实现）');
+      }
     } catch (e) {
-      print('处理answer失败: $e');
+      print('处理 answer 失败: $e');
     }
   }
 
   /// 处理 ICE 候选者消息
-  /// 
-  /// 添加对方发来的 ICE 候选者。
-  Future<void> handleNewICECandidateMsg(Map<String, dynamic> data) async {
+  Future<void> _handleNewICECandidateMsg(Map<String, dynamic> data) async {
     try {
-      print('处理ICE候选者消息');
-      if (_peerConnection == null) {
-        print('PeerConnection未初始化');
-        return;
-      }
-      // 创建并添加候选者
-      final RTCIceCandidate candidate = RTCIceCandidate(
+      print('处理 ICE 候选者消息');
+      if (_peerConnection == null) return;
+
+      final candidate = RTCIceCandidate(
         data['candidate']['candidate'],
         data['candidate']['sdpMid'],
         data['candidate']['sdpMLineIndex'],
       );
       await _peerConnection!.addCandidate(candidate);
-      print('已添加ICE候选者');
+      print('已添加 ICE 候选者');
     } catch (e) {
-      print('添加ICE候选者失败: $e');
+      print('添加 ICE 候选者失败: $e');
     }
   }
 
   /// 发送 offer
-  /// 
-  /// 创建并发送呼叫请求（offer）。
-  /// 在对方接听后调用。
-  Future<void> onOffer() async {
+  Future<void> _onOffer() async {
     try {
-      print('创建offer');
-      if (_peerConnection == null) {
-        print('PeerConnection未初始化');
-        return;
-      }
-      // 创建 offer
-      RTCSessionDescription offer = await _peerConnection!.createOffer();
+      print('创建 offer');
+      if (_peerConnection == null) return;
+
+      final offer = await _peerConnection!.createOffer();
       await _peerConnection!.setLocalDescription(offer);
-      // 发送 offer
-      await _videoApi.offer(_currentPeerId!, {
+
+      await _audioApi.offer(_currentPeerId!, {
         'sdp': offer.sdp,
         'type': offer.type,
       });
-      print('已发送offer');
+      print('已发送 offer');
     } catch (e) {
-      print('创建offer失败: $e');
+      print('创建 offer 失败: $e');
     }
   }
 
   /// 处理来电
-  /// 
-  /// 处理收到的呼叫邀请。
-  /// 
-  /// 参数：
-  /// - data: 邀请数据
-  void handleIncomingCall(Map<String, dynamic> data) {
+  void _handleIncomingCall(Map<String, dynamic> data) {
     print('收到来电: $data');
     final fromUserId = data['fromUserId'] as String?;
     final isOnlyAudio = data['isOnlyAudio'] as bool? ?? true;
+    final kemCiphertext = data['kemCiphertext'] as String?;
+    final signature = data['signature'] as String?;
+    final sigPublicKey = data['sigPublicKey'] as String?;
+    final timestamp = data['timestamp'] as String?;
+    final offer = data['offer'] as Map<String, dynamic>?;
 
     if (fromUserId != null) {
       _currentPeerId = fromUserId;
@@ -973,137 +847,279 @@ class CallService {
       _isCaller = false;
       _updateState(CallState.ringing);
 
-      // 触发回调
+      // 缓存对方公钥
+      if (sigPublicKey != null) {
+        // KEM 公钥需要从服务器获取或在其他方式传递
+        // 这里暂时只缓存签名公钥
+        _contactKeys[fromUserId] = {
+          'sigPublicKey': sigPublicKey,
+          'kemCiphertext': kemCiphertext ?? '',
+          'timestamp': timestamp ?? '',
+          'offer': jsonEncode(offer),
+          'signature': signature ?? '',
+        };
+      }
+
       if (_onIncomingCall != null) {
-        _onIncomingCall!(fromUserId, data['fromUserName'], isOnlyAudio);
+        _onIncomingCall!(
+          fromUserId, 
+          data['fromUserName'], 
+          isOnlyAudio,
+          kemCiphertext: kemCiphertext,
+          signature: signature,
+          sigPublicKey: sigPublicKey,
+          timestamp: timestamp,
+          offer: offer,
+        );
       }
     }
   }
 
-  /// 处理密钥交换事件
-  /// 
-  /// 处理对方发来的密钥交换消息。
-  Future<void> handleKeyExchangeEvent(Map<String, dynamic> data) async {
-    try {
-      print('处理密钥交换事件: $data');
-      final fromUserId = data['fromUserId'] as String?;
-      final ciphertext = data['keyData']?['ciphertext'] as String?;
-
-      if (fromUserId != null && ciphertext != null) {
-        await handleKeyExchange(fromUserId, ciphertext);
-      }
-    } catch (e) {
-      print('处理密钥交换事件失败: $e');
-    }
+  /// 获取来电数据（用于接听时验证）
+  Map<String, String>? getIncomingCallData(String callerId) {
+    return _contactKeys[callerId];
   }
 
-  /// 发起通话
-  /// 
-  /// 呼叫指定用户。
-  /// 
-  /// 流程：
-  /// 1. 设置通话信息
-  /// 2. 初始化密钥
-  /// 3. 初始化媒体设备
-  /// 4. 创建 PeerConnection
-  /// 5. 发送呼叫请求
-  /// 
-  /// 参数：
-  /// - calleeId: 被叫方用户ID
-  /// - isOnlyAudio: 是否仅音频通话
-  Future<void> initiateCall(String calleeId, {bool isOnlyAudio = true}) async {
+  /// 发送安全消息
+  Future<void> sendSecureMessage(String message) async {
+    if (_currentPeerId == null) {
+      throw Exception('没有活动的通话');
+    }
+
+    final sessionKey = _sessionKeys[_currentPeerId!];
+    if (sessionKey == null) {
+      throw Exception('会话密钥未建立');
+    }
+
+    if (_dataChannel == null || _dataChannel!.state != RTCDataChannelState.RTCDataChannelOpen) {
+      throw Exception('数据通道未就绪');
+    }
+
     try {
-      // 步骤1: 设置通话信息
-      _isCaller = true;
-      _currentPeerId = calleeId;
-      _isOnlyAudio = isOnlyAudio;
-      _toUserIsReady = false;
-      _updateState(CallState.calling);
+      // 使用 AES-256-GCM 加密消息
+      final encryptionResult = _cryptoService.encryptAesGcm(sessionKey, message);
+      final ciphertext = encryptionResult['ciphertext']!;
+      final iv = encryptionResult['iv']!;
+      final tag = encryptionResult['tag']!;
 
-      // 步骤2: 初始化密钥
-      await initializeKeys();
-
-      // 步骤3: 初始化媒体设备
-      await initializeLocalStream();
-      await createPeerConnectionInternal();
-
-      // 步骤4: 生成通话签名
-      final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-      final signature = generateCallSignature(calleeId, timestamp);
-
-      // 步骤5: 发送加密呼叫请求
-      final result = await _videoApi.secureInvite(
-        calleeId,
-        isOnlyAudio,
-        signature,
-        _signatureKeyPair!['publicKey']!,
+      // 签名
+      final signature = _sigService.signMessage(
+        _currentUserKeys!.sigSecretKey,
+        ciphertext + iv + tag
       );
-      print('secureInvite结果: $result');
-      
-      if (result['code'] == -1) {
-        throw Exception(result['message'] ?? '用户不在线');
-      }
-      
-      print('已发送secureInvite到 $calleeId');
 
+      final payload = jsonEncode({
+        'ciphertext': ciphertext,
+        'iv': iv,
+        'tag': tag,
+        'signature': signature,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      });
+
+      _dataChannel!.send(RTCDataChannelMessage(payload));
+      print('安全消息已发送');
     } catch (e) {
-      print('发起呼叫失败: $e');
-      _updateState(CallState.error);
-      throw Exception('发起呼叫失败: $e');
+      print('发送安全消息失败: $e');
+      throw Exception('发送安全消息失败: $e');
     }
   }
 
-  /// 接听通话
-  /// 
-  /// 接听当前来电。
-  /// 
-  /// 流程：
-  /// 1. 初始化密钥
-  /// 2. 初始化媒体设备
-  /// 3. 创建 PeerConnection
-  /// 4. 发送接听响应
-  Future<void> acceptCall() async {
+  /// 处理安全消息
+  void _handleSecureMessage(String payload) {
     try {
-      if (_currentPeerId == null) {
-        throw Exception('没有待接听的通话');
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      final ciphertext = data['ciphertext'] as String?;
+      final iv = data['iv'] as String?;
+      final tag = data['tag'] as String?;
+      final signature = data['signature'] as String;
+      final timestamp = data['timestamp'] as int;
+
+      if (ciphertext == null || iv == null || tag == null) {
+        print('消息格式错误，缺少必要字段');
+        return;
       }
 
-      _updateState(CallState.connecting);
+      if (_currentPeerId == null) return;
 
-      // 初始化密钥
-      await initializeKeys();
+      final sessionKey = _sessionKeys[_currentPeerId!];
+      if (sessionKey == null) return;
 
-      // 初始化媒体设备
-      await initializeLocalStream();
-      await createPeerConnectionInternal();
+      // 获取对方签名公钥
+      final contactKeys = _contactKeys[_currentPeerId!];
+      if (contactKeys == null) return;
 
-      // 发送接听响应
-      final result = await _videoApi.accept(_currentPeerId!);
-      print('accept结果: $result');
-      
-      if (result['code'] == -1) {
-        throw Exception(result['message'] ?? '用户不在线');
+      // 验证签名
+      final isValid = _sigService.verifyMessage(
+        contactKeys['sigPublicKey']!,
+        ciphertext + iv + tag,
+        signature
+      );
+
+      if (!isValid) {
+        print('消息签名验证失败');
+        return;
       }
-      
-      _toUserIsReady = true;
-      print('已发送accept');
 
+      // 解密消息
+      final decrypted = _cryptoService.decryptAesGcm(sessionKey, ciphertext, iv, tag);
+
+      // 检查消息是否过期（30秒内有效）
+      final age = DateTime.now().millisecondsSinceEpoch - timestamp;
+      if (age > 30000) {
+        print('消息已过期，忽略');
+        return;
+      }
+
+      print('收到安全消息: $decrypted');
     } catch (e) {
-      print('接受通话失败: $e');
-      _updateState(CallState.error);
-      throw Exception('接受通话失败: $e');
+      print('处理安全消息失败: $e');
     }
   }
 
-  /// 拒绝通话
-  /// 
-  /// 拒绝当前来电。
-  void rejectCall() {
-    if (_currentPeerId != null) {
-      _videoApi.hangup(_currentPeerId!);
+
+
+  /// 尝试重连
+  void _attemptReconnect() {
+    if (_reconnectAttempts >= _maxReconnectAttempts) {
+      print('已达到最大重连次数');
+      handleHangup();
+      return;
     }
+
+    _reconnectAttempts++;
+    print('尝试重连 ($_reconnectAttempts/$_maxReconnectAttempts)');
+
+    _reconnectTimer = Timer(_reconnectDelay, () async {
+      if (_peerConnection != null) {
+        await _peerConnection!.close();
+        _peerConnection = null;
+      }
+      
+      await _createPeerConnectionInternal();
+      
+      if (_isCaller) {
+        await _createAndSendOffer();
+      }
+    });
+  }
+
+  /// 创建并发送 Offer
+  Future<void> _createAndSendOffer() async {
+    try {
+      if (_peerConnection == null || _currentPeerId == null) return;
+
+      print('重新创建并发送 offer...');
+      
+      final offer = await _peerConnection!.createOffer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': false,
+      });
+      
+      await _peerConnection!.setLocalDescription(offer);
+      
+      await _audioApi.offer(_currentPeerId!, {
+        'sdp': offer.sdp,
+        'type': offer.type,
+      });
+
+      print('重新发送 offer 成功');
+    } catch (e) {
+      print('重新创建 offer 失败: $e');
+    }
+  }
+
+  /// 挂断通话
+  void handleHangup() {
+    print('handleHangup 被调用');
+    endCall();
+  }
+
+  /// 处理被拒绝
+  void _handleRejected() {
+    print('[CallService] ========================================');
+    print('[CallService] >>> _handleRejected 被调用 <<<');
+    print('[CallService] 当前状态: $_currentState');
+    print('[CallService] ========================================');
     _cleanup();
     _updateState(CallState.rejected);
+    print('[CallService] _handleRejected 处理完成');
+  }
+
+  /// 结束通话
+  Future<void> endCall() async {
+    try {
+      print('endCall 被调用');
+      if (_currentPeerId != null) {
+        await _audioApi.hangup(_currentPeerId!);
+      }
+      _cleanup();
+      _updateState(CallState.ended);
+      print('通话已结束');
+    } catch (e) {
+      print('结束通话失败: $e');
+      _updateState(CallState.error);
+    }
+  }
+
+  /// 设置静音状态
+  void setMute(bool muted) {
+    if (_localStream != null) {
+      _isAudioEnabled = !muted;
+      _localStream!.getAudioTracks().forEach((track) {
+        track.enabled = _isAudioEnabled;
+      });
+    }
+  }
+
+  /// 清理资源
+  void _cleanup() {
+    if (_isCleanupInProgress) {
+      print('清理已在进行，跳过重复清理');
+      return;
+    }
+    
+    _isCleanupInProgress = true;
+    print('开始清理资源...');
+
+    _destroyTimer();
+    _destroyReconnectTimer();
+    _reconnectAttempts = 0;
+
+    if (_currentPeerId != null) {
+      clearSessionKey(_currentPeerId!);
+    }
+
+    if (_dataChannel != null) {
+      _dataChannel!.close();
+      _dataChannel = null;
+    }
+
+    if (_peerConnection != null) {
+      _peerConnection!.close();
+      _peerConnection = null;
+    }
+
+    if (_localStream != null) {
+      _localStream!.getTracks().forEach((track) {
+        track.stop();
+      });
+      _localStream = null;
+    }
+
+    _remoteStream = null;
+
+    _currentPeerId = null;
+    _isCaller = false;
+    _time = 0;
+    _toUserIsReady = false;
+    _isOnlyAudio = true;
+    
+    _isAudioEventInitialized = false;
+    _currentUserKeys = null;
+    
+    _isCleanupInProgress = false;
+
+    print('资源清理完成');
   }
 
   /// 销毁重连计时器
@@ -1122,186 +1138,7 @@ class CallService {
     }
   }
 
-  /// 尝试重连
-  /// 
-  /// 当连接断开时尝试重新连接。
-  void _attemptReconnect() {
-    if (_reconnectAttempts >= _maxReconnectAttempts) {
-      print('已达到最大重连次数');
-      handleHangup();
-      return;
-    }
-
-    _reconnectAttempts++;
-    print('尝试重连 ($_reconnectAttempts/$_maxReconnectAttempts)');
-
-    _reconnectTimer = Timer(_reconnectDelay, () async {
-      // 清理旧的 PeerConnection
-      if (_peerConnection != null) {
-        await _peerConnection!.close();
-        _peerConnection = null;
-      }
-      
-      // 重新创建 PeerConnection
-      await createPeerConnectionInternal();
-      
-      // 根据角色重新进行信令交换
-      if (_isCaller) {
-        // 如果是呼叫方，重新创建并发送 offer
-        await _createAndSendOffer();
-      }
-      // 如果是被叫方，等待新的 offer（通过 WebSocket 接收）
-    });
-  }
-  
-  /// 创建并发送 Offer
-  /// 
-  /// 用于重连时呼叫方重新发起连接。
-  Future<void> _createAndSendOffer() async {
-    try {
-      if (_peerConnection == null || _currentPeerId == null) return;
-      
-      print('重新创建并发送 offer...');
-      
-      // 创建 offer
-      final offer = await _peerConnection!.createOffer({
-        'offerToReceiveAudio': true,
-        'offerToReceiveVideo': false,
-      });
-      
-      // 设置本地描述
-      await _peerConnection!.setLocalDescription(offer);
-      
-      // 发送 offer 到对方
-      await _videoApi.offer(_currentPeerId!, {
-        'sdp': offer.sdp,
-        'type': offer.type,
-      });
-      
-      print('重新发送 offer 成功');
-    } catch (e) {
-      print('重新创建 offer 失败: $e');
-    }
-  }
-
-  /// 挂断通话
-  /// 
-  /// 结束当前通话。
-  void handleHangup() {
-    print('handleHangup 被调用 [isCaller: $_isCaller, currentPeerId: $_currentPeerId]');
-    endCall();
-  }
-
-  /// 结束通话
-  /// 
-  /// 结束当前正在进行的通话。
-  /// 
-  /// 流程：
-  /// 1. 发送结束通话信号
-  /// 2. 清理资源
-  /// 3. 更新状态为已结束
-  Future<void> endCall() async {
-    try {
-      print('endCall 被调用 [isCaller: $_isCaller, currentPeerId: $_currentPeerId]');
-      if (_currentPeerId != null) {
-        await _videoApi.hangup(_currentPeerId!);
-      }
-      _cleanup();
-      _updateState(CallState.ended);
-      print('通话已结束');
-    } catch (e) {
-      print('结束通话失败: $e');
-      _updateState(CallState.error);
-      throw Exception('结束通话失败: $e');
-    }
-  }
-
-  /// 设置静音状态
-  /// 
-  /// 开启或关闭麦克风静音。
-  /// 
-  /// 参数：
-  /// - muted: 是否静音
-  void setMute(bool muted) {
-    if (_localStream != null) {
-      _isAudioEnabled = !muted;
-      _localStream!.getAudioTracks().forEach((track) {
-        track.enabled = _isAudioEnabled;
-      });
-    }
-  }
-
-  /// 清理资源
-  /// 
-  /// 释放所有通话相关资源。
-  void _cleanup() {
-    if (_isCleanupInProgress) {
-      print('清理已在进行，跳过重复清理');
-      return;
-    }
-    
-    _isCleanupInProgress = true;
-    _cleanupStackTrace = StackTrace.current.toString();
-    print('开始清理资源... [isCaller: $_isCaller, currentPeerId: $_currentPeerId]');
-    print('清理调用栈: $_cleanupStackTrace');
-
-    // 停止计时器
-    _destroyTimer();
-    _destroyReconnectTimer();
-    _reconnectAttempts = 0;
-
-    // 清除会话密钥
-    if (_currentPeerId != null) {
-      clearSessionKey(_currentPeerId!);
-    }
-
-    // 关闭数据通道
-    if (_dataChannel != null) {
-      _dataChannel!.close();
-      _dataChannel = null;
-    }
-
-    // 关闭 PeerConnection
-    if (_peerConnection != null) {
-      _peerConnection!.close();
-      _peerConnection = null;
-    }
-
-    // 停止本地流
-    if (_localStream != null) {
-      _localStream!.getTracks().forEach((track) {
-        track.stop();
-      });
-      _localStream = null;
-    }
-
-    // 清除远程流
-    _remoteStream = null;
-
-    // 重置所有状态标志
-    _currentPeerId = null;
-    _isCaller = false;
-    _time = 0;
-    _toUserIsReady = false;
-    _isOnlyAudio = true;
-    
-    // 重置初始化标志，允许下次通话重新初始化
-    _isVideoEventInitialized = false;
-    _keysInitialized = false;
-    
-    // 清空密钥对
-    _signatureKeyPair = null;
-    _encryptionKeyPair = null;
-    
-    // 重置清理标志
-    _isCleanupInProgress = false;
-
-    print('资源清理完成');
-  }
-
   /// 切换音频
-  /// 
-  /// 开启或关闭麦克风。
   void toggleAudio() {
     if (_localStream != null) {
       _isAudioEnabled = !_isAudioEnabled;
@@ -1312,42 +1149,30 @@ class CallService {
   }
 
   /// 切换扬声器
-  /// 
-  /// 开启或关闭扬声器。
   Future<void> toggleSpeaker() async {
-    // WebRTC 库可能没有 toggleSpeaker 方法
-    // 这里可以根据实际使用的 WebRTC 库进行调整
     print('切换扬声器功能');
   }
 
   /// 切换听筒
-  /// 
-  /// 在听筒和扬声器之间切换。
   Future<void> toggleEarpiece() async {
-    // WebRTC 库可能没有这些方法
-    // 这里可以根据实际使用的 WebRTC 库进行调整
     print('切换听筒功能');
   }
 
   /// 更新通话状态
-  /// 
-  /// 通知 UI 通话状态变化。
   void _updateState(CallState state) {
+    print('[CallService] 更新状态: $_currentState -> $state');
     _currentState = state;
-    // 检查 StreamController 是否已关闭
     if (!_callStateController.isClosed) {
       _callStateController.add(state);
+      print('[CallService] 状态已发送到流: $state');
+    } else {
+      print('[CallService] 警告: _callStateController 已关闭');
     }
   }
 
   /// 释放资源
-  /// 
-  /// 清理所有资源，结束服务。
   Future<void> dispose() async {
     _cleanup();
     _subscription?.cancel();
-    // 不要关闭 StreamController，因为 CallService 是单例模式
-    // _callStateController.close();
-    // _timeController.close();
   }
 }

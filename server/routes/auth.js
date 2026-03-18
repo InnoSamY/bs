@@ -165,13 +165,13 @@ const authMiddleware = async (req, res, next) => {
 router.post('/register', async (req, res) => {
   try {
     // 从请求体获取参数
-    const { username, password, avatar, bio, publicKey } = req.body;
+    const { username, password, avatar, bio, publicKey, kemPublicKey, sigPublicKey } = req.body;
 
     // 验证必填字段
-    if (!username || !password || !publicKey) {
+    if (!username || !password) {
       return res.status(400).json({
         success: false,
-        message: '用户名、密码和公钥不能为空'
+        message: '用户名和密码不能为空'
       });
     }
 
@@ -193,12 +193,15 @@ router.post('/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, salt);  // 哈希密码
 
     // 创建新用户对象
+    // 优先使用新的后量子公钥字段，兼容旧版本
     const user = new User({
       username,                              // 用户名
       password: hashedPassword,             // 哈希后的密码
       avatar: avatar || null,               // 头像（默认null）
       bio: bio || '',                       // 个性签名（默认空字符串）
-      publicKey                              // 加密公钥
+      publicKey: publicKey || kemPublicKey || '',  // 兼容旧版本
+      encryptionPublicKey: kemPublicKey,    // ML-KEM 公钥
+      signaturePublicKey: sigPublicKey      // 签名公钥
     });
 
     // 保存到数据库
@@ -216,7 +219,9 @@ router.post('/register', async (req, res) => {
         username: user.username,            // 用户名
         avatar: user.avatar,               // 头像
         bio: user.bio,                     // 个性签名
-        publicKey: user.publicKey,         // 公钥
+        publicKey: user.publicKey,         // 公钥（兼容旧版本）
+        kemPublicKey: user.encryptionPublicKey,  // ML-KEM 公钥
+        sigPublicKey: user.signaturePublicKey,   // 签名公钥
         token                               // JWT令牌
       }
     });
@@ -327,7 +332,9 @@ router.post('/login', async (req, res) => {
         username: user.username,            // 用户名
         avatar: user.avatar,               // 头像
         bio: user.bio,                     // 个性签名
-        publicKey: user.publicKey,         // 公钥
+        publicKey: user.publicKey,         // 公钥（兼容旧版本）
+        kemPublicKey: user.encryptionPublicKey,  // ML-KEM 公钥
+        sigPublicKey: user.signaturePublicKey,   // 签名公钥
         token                               // JWT令牌
       }
     });

@@ -34,6 +34,24 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        
+        // 配置 NDK 和 CMake
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-O2 -fexceptions -frtti"
+                arguments += "-DANDROID_STL=c++_shared"
+            }
+        }
+        
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+    }
+    
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     buildTypes {

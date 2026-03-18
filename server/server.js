@@ -37,8 +37,8 @@ require('dotenv').config();                // 加载环境变量
 const authRoutes = require('./routes/auth');        // 认证路由（注册、登录）
 const contactRoutes = require('./routes/contacts'); // 联系人路由
 const callRoutes = require('./routes/calls');       // 通话路由
-const videoRoutes = require('./routes/video');      // 视频通话路由
-const userSockets = require('./routes/video-sockets');  // 用户Socket映射
+const audioRoutes = require('./routes/audio');      // 音频通话路由
+const userSockets = require('./routes/audio-sockets');  // 用户Socket映射
 
 // ==================== 创建应用实例 ====================
 
@@ -188,12 +188,12 @@ mongoose.connect(MONGODB_URI, {
  * - /api/auth: 认证相关接口（注册、登录）
  * - /api/contacts: 联系人相关接口
  * - /api/calls: 通话相关接口
- * - /api/video: 视频通话相关接口
+ * - /api/audio: 音频通话相关接口
  */
 app.use('/api/auth', authRoutes);         // 认证路由
 app.use('/api/contacts', contactRoutes);  // 联系人路由
 app.use('/api/calls', callRoutes);        // 通话路由
-app.use('/api/video', videoRoutes);       // 视频通话路由
+app.use('/api/audio', audioRoutes);       // 音频通话路由
 
 // ==================== 健康检查接口 ====================
 

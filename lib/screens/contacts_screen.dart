@@ -10,12 +10,22 @@ import 'package:flutter_base/screens/call_screen.dart';
 import 'package:flutter_base/screens/contact_requests_screen.dart';
 import 'package:flutter_base/screens/profile_screen.dart';
 
+/// 联系人模型
+/// 
+/// 包含联系人的基本信息和后量子安全公钥
+/// 用于建立端到端加密通话
 class Contact {
   final String id;
   final String username;
   final String avatar;
   final String bio;
   final bool isOnline;
+  
+  // 后量子加密公钥（ML-KEM）- 用于密钥封装
+  final String? kemPublicKey;
+  
+  // 后量子签名公钥 - 用于验证签名
+  final String? sigPublicKey;
 
   Contact({
     required this.id,
@@ -23,7 +33,21 @@ class Contact {
     required this.avatar,
     required this.bio,
     this.isOnline = false,
+    this.kemPublicKey,
+    this.sigPublicKey,
   });
+  
+  factory Contact.fromJson(Map<String, dynamic> json) {
+    return Contact(
+      id: json['id'] ?? '',
+      username: json['username'] ?? '未知用户',
+      avatar: json['avatar'] ?? '',
+      bio: json['bio'] ?? '',
+      isOnline: json['isOnline'] ?? false,
+      kemPublicKey: json['kemPublicKey'],
+      sigPublicKey: json['sigPublicKey'],
+    );
+  }
 }
 
 class ContactsScreen extends StatefulWidget {
@@ -70,7 +94,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
     try {
       await _webSocketService.connect(_currentUserId!);
-      _callService.videoEvent();
+      _callService.audioEvent();
       _callService.setOnIncomingCall(_handleIncomingCall);
       print('WebSocket 连接成功');
       _connectionSubscription = _webSocketService.eventStream.listen((_) {
@@ -91,8 +115,27 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  void _handleIncomingCall(String callerId, String? callerName, bool isOnlyAudio) {
+  bool _isHandlingIncomingCall = false;
+
+  void _handleIncomingCall(
+    String callerId, 
+    String? callerName, 
+    bool isOnlyAudio, {
+    String? kemCiphertext,
+    String? signature,
+    String? sigPublicKey,
+    String? timestamp,
+    Map<String, dynamic>? offer,
+  }) {
     print('处理来电: callerId=$callerId, callerName=$callerName');
+
+    // 防止重复处理来电
+    if (_isHandlingIncomingCall) {
+      print('来电已在处理中，跳过');
+      return;
+    }
+
+    _isHandlingIncomingCall = true;
 
     final contact = _contacts.firstWhere(
       (c) => c.id == callerId,
@@ -101,6 +144,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
         username: callerName ?? '未知用户',
         avatar: '',
         bio: '',
+        kemPublicKey: null,
+        sigPublicKey: sigPublicKey,
       ),
     );
 
@@ -111,9 +156,17 @@ class _ContactsScreenState extends State<ContactsScreen> {
           builder: (context) => CallScreen(
             contact: contact,
             callType: CallType.incoming,
+            kemCiphertext: kemCiphertext,
+            signature: signature,
+            callerSigPublicKey: sigPublicKey,
+            timestamp: timestamp,
+            offer: offer,
           ),
         ),
-      );
+      ).then((_) {
+        // 页面关闭后重置标志
+        _isHandlingIncomingCall = false;
+      });
     }
   }
 
@@ -145,6 +198,14 @@ class _ContactsScreenState extends State<ContactsScreen> {
   }
 
   void _startCall(Contact contact) {
+    // 检查公钥信息是否完整
+    if (contact.kemPublicKey == null || contact.sigPublicKey == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('联系人公钥信息不完整，无法发起安全通话')),
+      );
+      return;
+    }
+    
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -270,11 +331,15 @@ class _ContactsScreenState extends State<ContactsScreen> {
           ),
           IconButton(
             icon: Icon(Icons.person_add_alt_1_outlined, color: Colors.white),
-            onPressed: () {
-              Navigator.push(
+            onPressed: () async {
+              final result = await Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => ContactRequestsScreen()),
               );
+              // 如果从联系人请求页面返回时有更新，刷新联系人列表
+              if (result == true) {
+                _loadContacts();
+              }
             },
             tooltip: '联系人请求',
           ),

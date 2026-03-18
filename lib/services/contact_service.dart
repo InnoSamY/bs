@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
-import 'package:flutter_base/models/user.dart';
 import 'package:flutter_base/screens/contacts_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -53,13 +52,7 @@ class ContactService {
       if (response.data['success'] == true) {
         List<Contact> contacts = [];
         for (var item in response.data['data']) {
-          contacts.add(Contact(
-            id: item['id'] ?? '',
-            username: item['username'] ?? '未知用户',
-            avatar: item['avatar'] ?? '',
-            bio: item['bio'] ?? '',
-            isOnline: item['isOnline'] ?? false,
-          ));
+          contacts.add(Contact.fromJson(item));
         }
         return contacts;
       } else {
@@ -252,6 +245,38 @@ class ContactService {
         }
       }
       throw Exception('拒绝联系人请求失败: $error');
+    }
+  }
+  
+  /// 获取联系人详情
+  /// 
+  /// 获取指定联系人的详细信息，包括公钥。
+  /// 
+  /// 参数：
+  /// - contactId: 联系人ID
+  /// 
+  /// 返回：
+  /// - Contact 对象，包含公钥信息
+  Future<Contact?> getContactDetail(String contactId) async {
+    try {
+      final token = await _getToken();
+      if (token == null) {
+        throw Exception('未登录');
+      }
+      
+      final response = await _dio.get(
+        '$_baseUrl/contacts/$contactId',
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+      
+      if (response.data['success'] == true) {
+        return Contact.fromJson(response.data['data']);
+      } else {
+        return null;
+      }
+    } catch (error) {
+      print('获取联系人详情失败: $error');
+      return null;
     }
   }
 }

@@ -48,6 +48,8 @@ class _ContactRequestsScreenState extends State<ContactRequestsScreen> {
         SnackBar(content: Text('已接受联系人请求')),
       );
       _loadRequests();
+      // 通知上一页刷新联系人列表
+      Navigator.pop(context, true);
     } catch (error) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('接受请求失败: $error')),

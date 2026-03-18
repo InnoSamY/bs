@@ -62,6 +62,9 @@ dependencies:
   # 后量子密码学库（ML-KEM/Kyber 和 ML-DSA/Dilithium）
   pqcrypto: ^0.1.0
   
+  # FFI 用于调用 native 库
+  ffi: ^2.1.2
+  
   # 权限处理
   permission_handler: ^11.3.1
 

@@ -1,44 +1,63 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_base/models/user.dart';
+import 'package:flutter_base/services/pqc_kem_service.dart';
+import 'package:flutter_base/services/pqc_signature_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 认证服务类
 /// 
-/// 提供用户注册、登录、登出等功能。
+/// 提供用户注册、登录、密钥管理等功能。
 /// 
 /// 主要功能：
-/// 1. 用户注册（register）
+/// 1. 用户注册（register）- 自动生成后量子密钥对
 /// 2. 用户登录（login）
-/// 3. 用户登出（logout）
-/// 4. 获取当前用户信息（getCurrentUser）
-/// 5. 本地存储用户信息（_saveUser）
+/// 3. 密钥管理（生成、存储、获取）
+/// 4. 本地存储用户信息
+/// 
+/// 安全特性：
+/// - 注册时自动生成两套密钥对（ML-KEM + 签名）
+/// - 私钥只在本地存储，不上传服务器
+/// - 公钥上传到服务器用于加密通信
 class AuthService {
   final Dio _dio = Dio();
-  // 云服务器API地址
   final String _baseUrl = 'http://123.56.168.149:3000/api';
+  
+  final _kemService = PqcKemService();
+  final _sigService = PqcSignatureService();
   
   /// 注册新用户
   /// 
-  /// 向服务器发送注册请求，创建新用户账户。
+  /// 流程：
+  /// 1. 生成 ML-KEM 密钥对
+  /// 2. 生成签名密钥对
+  /// 3. 上传公钥到服务器
+  /// 4. 本地保存私钥
   /// 
   /// 参数：
   /// - username: 用户名
   /// - password: 密码
   /// - avatar: 头像路径
   /// - bio: 个性签名
-  /// - publicKey: 公钥（用于后量子加密）
-  /// 
-  /// 返回：
-  /// - User: 创建的用户对象
   Future<User> register({
     required String username,
     required String password,
     required String avatar,
     required String bio,
-    required String publicKey,
   }) async {
     try {
+      // 生成后量子密钥对
+      print('正在生成后量子密钥对...');
+      
+      // 1. 生成 ML-KEM 密钥对
+      final kemKeyPair = _kemService.generateKeyPair();
+      
+      // 2. 生成签名密钥对
+      final sigKeyPair = _sigService.generateKeyPair();
+      
+      print('✓ 密钥对生成成功');
+      
+      // 3. 注册到服务器（只上传公钥）
       final response = await _dio.post(
         '$_baseUrl/auth/register',
         data: {
@@ -46,12 +65,23 @@ class AuthService {
           'password': password,
           'avatar': avatar,
           'bio': bio,
-          'publicKey': publicKey,
+          'kemPublicKey': kemKeyPair['publicKey'],
+          'sigPublicKey': sigKeyPair['publicKey'],
         },
       );
       
       if (response.data['success'] == true) {
         User user = User.fromJson(response.data['data']);
+        
+        // 4. 本地保存私钥
+        await _saveUserKeys(UserKeys(
+          userId: user.id,
+          kemPublicKey: kemKeyPair['publicKey']!,
+          kemSecretKey: kemKeyPair['privateKey']!,
+          sigPublicKey: sigKeyPair['publicKey']!,
+          sigSecretKey: sigKeyPair['privateKey']!,
+        ));
+        
         await _saveUser(user);
         return user;
       } else {
@@ -63,15 +93,6 @@ class AuthService {
   }
   
   /// 用户登录
-  /// 
-  /// 向服务器发送登录请求，验证用户身份。
-  /// 
-  /// 参数：
-  /// - userId: 用户ID
-  /// - password: 密码
-  /// 
-  /// 返回：
-  /// - User: 登录成功的用户对象
   Future<User> login({
     required String userId,
     required String password,
@@ -88,6 +109,15 @@ class AuthService {
       if (response.data['success'] == true) {
         User user = User.fromJson(response.data['data']);
         await _saveUser(user);
+        
+        // 检查本地是否已有密钥
+        final existingKeys = await getCurrentUserKeys();
+        if (existingKeys == null) {
+          throw Exception('本机缺少该账号私钥，请使用原设备登录或重新注册');
+        } else {
+          print('✓ 使用本地已有密钥');
+        }
+        
         return user;
       } else {
         throw Exception(response.data['message'] ?? '登录失败');
@@ -98,19 +128,13 @@ class AuthService {
   }
   
   /// 用户登出
-  /// 
-  /// 清除本地存储的用户信息。
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('user');
+    // 保留私钥，不删除 user_keys
   }
   
   /// 获取当前登录用户
-  /// 
-  /// 从本地存储中读取用户信息。
-  /// 
-  /// 返回：
-  /// - User?: 当前用户对象，如果未登录则返回 null
   Future<User?> getCurrentUser() async {
     final prefs = await SharedPreferences.getInstance();
     final userJson = prefs.getString('user');
@@ -120,16 +144,21 @@ class AuthService {
     return User.fromJson(userMap);
   }
   
+  /// 获取当前用户的密钥
+  Future<UserKeys?> getCurrentUserKeys() async {
+    final currentUser = await getCurrentUser();
+    if (currentUser == null) return null;
+    
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'user_keys_${currentUser.id}';
+    final keysJson = prefs.getString(key);
+    if (keysJson == null) return null;
+    
+    final keysMap = jsonDecode(keysJson);
+    return UserKeys.fromJson(keysMap);
+  }
+  
   /// 更新用户资料
-  /// 
-  /// 向服务器发送更新请求，修改用户的头像和个性签名。
-  /// 
-  /// 参数：
-  /// - avatar: 头像（Base64编码）
-  /// - bio: 个性签名
-  /// 
-  /// 返回：
-  /// - User: 更新后的用户对象
   Future<User> updateProfile({
     required String avatar,
     required String bio,
@@ -155,14 +184,9 @@ class AuthService {
 
       if (response.data['success'] == true) {
         final updatedUser = User.fromJson(response.data['data']);
-        final mergedUser = User(
-          id: updatedUser.id,
-          username: updatedUser.username,
-          password: currentUser.password,
+        final mergedUser = currentUser.copyWith(
           avatar: updatedUser.avatar,
           bio: updatedUser.bio,
-          publicKey: updatedUser.publicKey,
-          token: currentUser.token,
         );
         await _saveUser(mergedUser);
         return mergedUser;
@@ -173,15 +197,17 @@ class AuthService {
       throw Exception('更新失败: $error');
     }
   }
-
+  
   /// 保存用户信息到本地
-  /// 
-  /// 使用 SharedPreferences 将用户信息持久化存储。
-  /// 
-  /// 参数：
-  /// - user: 用户对象
   Future<void> _saveUser(User user) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('user', jsonEncode(user.toJson()));
+  }
+  
+  /// 保存用户密钥到本地
+  Future<void> _saveUserKeys(UserKeys keys) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = 'user_keys_${keys.userId}';
+    await prefs.setString(key, jsonEncode(keys.toJson()));
   }
 }

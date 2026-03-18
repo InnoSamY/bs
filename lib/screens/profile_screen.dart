@@ -293,10 +293,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                       child: ListTile(
                         leading: Icon(Icons.key_outlined, color: Colors.grey[600]),
-                        title: Text('公钥'),
+                        title: Text('后量子公钥'),
                         subtitle: Text(
-                          _currentUser?.publicKey.isNotEmpty == true
-                              ? '${_currentUser!.publicKey.substring(0, 20)}...'
+                          _currentUser?.kemPublicKey.isNotEmpty == true
+                              ? '${_currentUser!.kemPublicKey.substring(0, 20)}...'
                               : '未设置',
                           style: TextStyle(fontSize: 12, color: Colors.grey[500]),
                         ),
@@ -306,11 +306,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             context: context,
                             builder: (context) => AlertDialog(
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                              title: Text('我的公钥'),
+                              title: Text('我的后量子公钥'),
                               content: SingleChildScrollView(
-                                child: SelectableText(
-                                  _currentUser?.publicKey ?? '未设置',
-                                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text('KEM 公钥 (ML-KEM-768):', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    SizedBox(height: 8),
+                                    SelectableText(
+                                      _currentUser?.kemPublicKey ?? '未设置',
+                                      style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                                    ),
+                                    SizedBox(height: 16),
+                                    Text('签名公钥:', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    SizedBox(height: 8),
+                                    SelectableText(
+                                      _currentUser?.sigPublicKey ?? '未设置',
+                                      style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                                    ),
+                                  ],
                                 ),
                               ),
                               actions: [
