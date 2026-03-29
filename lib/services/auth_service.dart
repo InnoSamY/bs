@@ -55,7 +55,7 @@ class AuthService {
       // 2. 生成签名密钥对
       final sigKeyPair = _sigService.generateKeyPair();
       
-      print('✓ 密钥对生成成功');
+      print('密钥对生成成功');
       
       // 3. 注册到服务器（只上传公钥）
       final response = await _dio.post(
@@ -140,8 +140,14 @@ class AuthService {
     final userJson = prefs.getString('user');
     if (userJson == null) return null;
     
-    final userMap = jsonDecode(userJson);
-    return User.fromJson(userMap);
+    try {
+      final userMap = jsonDecode(userJson);
+      return User.fromJson(userMap);
+    } catch (e) {
+      print('用户数据解析失败，清除损坏的缓存: $e');
+      await prefs.remove('user');
+      return null;
+    }
   }
   
   /// 获取当前用户的密钥
@@ -154,8 +160,14 @@ class AuthService {
     final keysJson = prefs.getString(key);
     if (keysJson == null) return null;
     
-    final keysMap = jsonDecode(keysJson);
-    return UserKeys.fromJson(keysMap);
+    try {
+      final keysMap = jsonDecode(keysJson);
+      return UserKeys.fromJson(keysMap);
+    } catch (e) {
+      print('密钥数据解析失败，清除损坏的缓存: $e');
+      await prefs.remove(key);
+      return null;
+    }
   }
   
   /// 更新用户资料

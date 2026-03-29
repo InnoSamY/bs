@@ -6,11 +6,27 @@ import 'package:flutter_base/services/call_service.dart';
 import 'package:flutter_base/services/websocket_service.dart';
 import 'package:flutter_base/services/contact_service.dart';
 
+/// 通话类型枚举
 enum CallType {
+  /// 呼出（主动发起通话）
   outgoing,
+
+  /// 呼入（接听来电）
   incoming,
 }
 
+/// 通话界面
+///
+/// 提供完整的语音通话功能：
+/// - 发起/接听通话
+/// - 显示通话状态
+/// - 静音/取消静音
+/// - 挂断通话
+///
+/// 安全特性：
+/// - 使用 ML-KEM 进行密钥交换
+/// - 使用数字签名验证身份
+/// - 端到端加密通话
 class CallScreen extends StatefulWidget {
   final Contact contact;
   final CallType callType;

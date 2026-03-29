@@ -1,6 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_base/services/contact_service.dart';
 
+/// 添加联系人界面
+///
+/// 提供添加新联系人的功能：
+/// - 输入对方用户ID
+/// - 发送添加请求
+///
+/// 添加成功后，对方需要接受请求才能成为联系人
 class AddContactScreen extends StatefulWidget {
   @override
   _AddContactScreenState createState() => _AddContactScreenState();

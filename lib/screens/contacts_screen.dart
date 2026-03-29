@@ -11,21 +11,40 @@ import 'package:flutter_base/screens/contact_requests_screen.dart';
 import 'package:flutter_base/screens/profile_screen.dart';
 
 /// 联系人模型
-/// 
+///
 /// 包含联系人的基本信息和后量子安全公钥
 /// 用于建立端到端加密通话
+///
+/// 安全字段：
+/// - kemPublicKey: ML-KEM 公钥，用于密钥封装
+/// - sigPublicKey: 签名公钥，用于验证身份
 class Contact {
+  // ==================== 基本信息 ====================
+
+  /// 用户唯一标识
   final String id;
+
+  /// 用户名
   final String username;
+
+  /// 头像路径
   final String avatar;
+
+  /// 个性签名
   final String bio;
+
+  /// 是否在线
   final bool isOnline;
-  
-  // 后量子加密公钥（ML-KEM）- 用于密钥封装
+
+  // ==================== 后量子安全公钥 ====================
+
+  /// 后量子加密公钥（ML-KEM）- 用于密钥封装
   final String? kemPublicKey;
-  
-  // 后量子签名公钥 - 用于验证签名
+
+  /// 后量子签名公钥 - 用于验证签名
   final String? sigPublicKey;
+
+  // ==================== 构造函数 ====================
 
   Contact({
     required this.id,
@@ -36,7 +55,8 @@ class Contact {
     this.kemPublicKey,
     this.sigPublicKey,
   });
-  
+
+  /// 从 JSON 创建 Contact 对象
   factory Contact.fromJson(Map<String, dynamic> json) {
     return Contact(
       id: json['id'] ?? '',
@@ -50,22 +70,58 @@ class Contact {
   }
 }
 
+/// 联系人列表界面
+///
+/// 主要功能：
+/// 1. 显示联系人列表
+/// 2. 发起加密通话
+/// 3. 管理联系人（添加、删除）
+/// 4. 处理来电
+/// 5. 显示好友请求
+///
+/// 安全特性：
+/// - 只显示拥有完整公钥的联系人
+/// - 来电时验证签名
+/// - 使用 WebSocket 接收实时信令
 class ContactsScreen extends StatefulWidget {
   @override
   _ContactsScreenState createState() => _ContactsScreenState();
 }
 
 class _ContactsScreenState extends State<ContactsScreen> {
+  // ==================== 服务实例 ====================
+
+  /// 认证服务
   final _authService = AuthService();
+
+  /// 联系人服务
   final _contactService = ContactService();
+
+  /// WebSocket 服务（用于实时信令）
   final _webSocketService = WebSocketService();
+
+  /// 通话服务
   final _callService = CallService();
 
+  // ==================== 状态变量 ====================
+
+  /// 联系人列表
   List<Contact> _contacts = [];
+
+  /// 是否正在加载
   bool _isLoading = false;
+
+  /// 当前用户ID
   String? _currentUserId;
+
+  /// 当前用户名
   String? _currentUsername;
+
+  /// WebSocket 连接状态订阅
   StreamSubscription? _connectionSubscription;
+
+  /// 是否正在处理来电（防止重复处理）
+  bool _isHandlingIncomingCall = false;
 
   @override
   void initState() {
@@ -73,12 +129,19 @@ class _ContactsScreenState extends State<ContactsScreen> {
     _initialize();
   }
 
+  /// 初始化界面
+  ///
+  /// 流程：
+  /// 1. 加载当前用户信息
+  /// 2. 加载联系人列表
+  /// 3. 连接 WebSocket
   Future<void> _initialize() async {
     await _loadCurrentUser();
     await _loadContacts();
     await _connectWebSocket();
   }
 
+  /// 加载当前登录用户信息
   Future<void> _loadCurrentUser() async {
     final user = await _authService.getCurrentUser();
     if (user != null) {
@@ -89,6 +152,9 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
+  /// 连接 WebSocket 服务器
+  ///
+  /// 用于接收实时信令消息（来电、通话状态等）
   Future<void> _connectWebSocket() async {
     if (_currentUserId == null) return;
 
@@ -115,11 +181,60 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  bool _isHandlingIncomingCall = false;
+  /// 构建头像图片
+  DecorationImage? _buildAvatarImage(String avatar) {
+    if (avatar.isEmpty) return null;
+    
+    try {
+      return DecorationImage(
+        image: MemoryImage(base64Decode(avatar)),
+        fit: BoxFit.cover,
+      );
+    } catch (e) {
+      print('头像解码失败: $e');
+      return null;
+    }
+  }
 
+  /// 构建头像占位符
+  Widget? _buildAvatarPlaceholder(Contact contact) {
+    if (contact.avatar.isNotEmpty) {
+      try {
+        base64Decode(contact.avatar);
+        return null;
+      } catch (e) {
+        // 头像解码失败，显示占位符
+      }
+    }
+    
+    return Center(
+      child: Text(
+        contact.username.isNotEmpty ? contact.username[0].toUpperCase() : '?',
+        style: TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.w500,
+          color: Colors.grey[700],
+        ),
+      ),
+    );
+  }
+
+  /// 处理来电
+  ///
+  /// 当收到来电时跳转到通话界面
+  ///
+  /// 参数：
+  /// - callerId: 呼叫方用户ID
+  /// - callerName: 呼叫方用户名
+  /// - isOnlyAudio: 是否仅音频通话
+  /// - kemCiphertext: KEM 密文（用于密钥交换）
+  /// - signature: 签名（用于验证身份）
+  /// - sigPublicKey: 签名公钥
+  /// - timestamp: 时间戳
+  /// - offer: WebRTC offer
   void _handleIncomingCall(
-    String callerId, 
-    String? callerName, 
+    String callerId,
+    String? callerName,
     bool isOnlyAudio, {
     String? kemCiphertext,
     String? signature,
@@ -137,6 +252,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
     _isHandlingIncomingCall = true;
 
+    // 查找联系人信息，如果不存在则创建临时联系人
     final contact = _contacts.firstWhere(
       (c) => c.id == callerId,
       orElse: () => Contact(
@@ -170,6 +286,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
+  /// 加载联系人列表
   Future<void> _loadContacts() async {
     setState(() {
       _isLoading = true;
@@ -191,12 +308,16 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  void _logout() async {
+  /// 用户登出
+  Future<void> _logout() async {
     _webSocketService.disconnect();
     await _authService.logout();
     Navigator.pushReplacementNamed(context, '/login');
   }
 
+  /// 发起通话
+  ///
+  /// 检查联系人公钥是否完整，然后跳转到通话界面
   void _startCall(Contact contact) {
     // 检查公钥信息是否完整
     if (contact.kemPublicKey == null || contact.sigPublicKey == null) {
@@ -409,25 +530,9 @@ class _ContactsScreenState extends State<ContactsScreen> {
                               decoration: BoxDecoration(
                                 color: Colors.grey[200],
                                 shape: BoxShape.circle,
-                                image: contact.avatar.isNotEmpty
-                                    ? DecorationImage(
-                                        image: MemoryImage(base64Decode(contact.avatar)),
-                                        fit: BoxFit.cover,
-                                      )
-                                    : null,
+                                image: _buildAvatarImage(contact.avatar),
                               ),
-                              child: contact.avatar.isEmpty
-                                  ? Center(
-                                      child: Text(
-                                        contact.username[0].toUpperCase(),
-                                        style: TextStyle(
-                                          fontSize: 20,
-                                          fontWeight: FontWeight.w500,
-                                          color: Colors.grey[700],
-                                        ),
-                                      ),
-                                    )
-                                  : null,
+                              child: _buildAvatarPlaceholder(contact),
                             ),
                             title: Text(
                               contact.username,

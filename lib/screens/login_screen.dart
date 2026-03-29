@@ -3,26 +3,58 @@ import 'package:flutter_base/services/auth_service.dart';
 import 'package:flutter_base/screens/register_screen.dart';
 import 'package:flutter_base/screens/contacts_screen.dart';
 
+/// 登录界面
+/// 
+/// 提供用户登录功能，包括：
+/// - 用户ID输入
+/// - 密码输入（支持显示/隐藏切换）
+/// - 登录按钮
+/// - 跳转到注册页面
+/// 
+/// 登录成功后跳转到联系人列表页面
 class LoginScreen extends StatefulWidget {
   @override
   _LoginScreenState createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  // ==================== 表单控制器 ====================
+  
+  /// 表单全局键，用于表单验证
   final _formKey = GlobalKey<FormState>();
+  
+  /// 用户ID输入控制器
   final _userIdController = TextEditingController();
+  
+  /// 密码输入控制器
   final _passwordController = TextEditingController();
+  
+  /// 认证服务实例
   final _authService = AuthService();
+  
+  // ==================== 状态变量 ====================
+  
+  /// 是否正在登录中（显示加载指示器）
   bool _isLoading = false;
+  
+  /// 是否隐藏密码（用于切换显示/隐藏）
   bool _obscurePassword = true;
 
   @override
   void dispose() {
+    // 释放控制器资源
     _userIdController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
+  /// 执行登录操作
+  /// 
+  /// 流程：
+  /// 1. 验证表单输入
+  /// 2. 调用 AuthService 进行登录
+  /// 3. 登录成功跳转到联系人列表
+  /// 4. 登录失败显示错误提示
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
@@ -51,9 +83,12 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // ==================== UI 构建 ====================
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // 浅灰色背景
       backgroundColor: Color(0xFFF5F5F5),
       body: Center(
         child: SingleChildScrollView(
@@ -70,6 +105,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
+                  // 应用图标
                   Container(
                     width: 72,
                     height: 72,
@@ -84,6 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   SizedBox(height: 24),
+                  // 应用名称
                   Text(
                     'Quantalk',
                     style: TextStyle(
@@ -94,6 +131,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   SizedBox(height: 8),
+                  // 副标题
                   Text(
                     '安全语音通话',
                     style: TextStyle(
@@ -102,12 +140,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   SizedBox(height: 40),
+                  // 用户ID输入框
                   TextFormField(
                     controller: _userIdController,
                     decoration: InputDecoration(
                       labelText: '用户ID',
                       prefixIcon: Icon(Icons.person_outline, color: Colors.grey[600]),
                     ),
+                    // 表单验证：不能为空
                     validator: (value) {
                       if (value!.isEmpty) {
                         return '请输入用户ID';
@@ -116,11 +156,13 @@ class _LoginScreenState extends State<LoginScreen> {
                     },
                   ),
                   SizedBox(height: 16),
+                  // 密码输入框
                   TextFormField(
                     controller: _passwordController,
                     decoration: InputDecoration(
                       labelText: '密码',
                       prefixIcon: Icon(Icons.lock_outline, color: Colors.grey[600]),
+                      // 显示/隐藏密码按钮
                       suffixIcon: IconButton(
                         icon: Icon(
                           _obscurePassword ? Icons.visibility_off : Icons.visibility,
@@ -133,7 +175,8 @@ class _LoginScreenState extends State<LoginScreen> {
                         },
                       ),
                     ),
-                    obscureText: _obscurePassword,
+                    obscureText: _obscurePassword, // 控制密码显示/隐藏
+                    // 表单验证：不能为空
                     validator: (value) {
                       if (value!.isEmpty) {
                         return '请输入密码';
@@ -142,12 +185,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     },
                   ),
                   SizedBox(height: 32),
+                  // 登录按钮
                   SizedBox(
                     width: double.infinity,
                     height: 48,
                     child: ElevatedButton(
                       onPressed: _isLoading ? null : _login,
                       child: _isLoading
+                          // 登录中显示加载指示器
                           ? SizedBox(
                               width: 20,
                               height: 20,
@@ -160,6 +205,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   SizedBox(height: 16),
+                  // 跳转到注册页面
                   TextButton(
                     onPressed: () {
                       Navigator.push(

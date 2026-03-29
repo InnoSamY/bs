@@ -3,30 +3,65 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter_base/services/auth_service.dart';
 import 'package:flutter_base/screens/login_screen.dart';
 import 'dart:io';
+import 'dart:convert';
 
+/// 注册界面
+/// 
+/// 提供新用户注册功能，包括：
+/// - 头像上传（从相册选择）
+/// - 用户名输入
+/// - 密码输入（至少6位）
+/// - 个性签名输入
+/// 
+/// 注册成功后会显示用户ID，需要用户牢记
+/// 同时会自动生成后量子密钥对（ML-KEM + 签名）
 class RegisterScreen extends StatefulWidget {
   @override
   _RegisterScreenState createState() => _RegisterScreenState();
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  // ==================== 表单控制器 ====================
+
+  /// 表单全局键，用于表单验证
   final _formKey = GlobalKey<FormState>();
+
+  /// 用户名输入控制器
   final _usernameController = TextEditingController();
+
+  /// 密码输入控制器
   final _passwordController = TextEditingController();
+
+  /// 个性签名输入控制器
   final _bioController = TextEditingController();
+
+  /// 认证服务实例
   final _authService = AuthService();
+
+  // ==================== 状态变量 ====================
+
+  /// 选择的头像文件
   File? _avatarFile;
+
+  /// 是否正在注册中（显示加载指示器）
   bool _isLoading = false;
+
+  /// 是否隐藏密码（用于切换显示/隐藏）
   bool _obscurePassword = true;
 
   @override
   void dispose() {
+    // 释放控制器资源
     _usernameController.dispose();
     _passwordController.dispose();
     _bioController.dispose();
     super.dispose();
   }
 
+  /// 从相册选择头像图片
+  /// 
+  /// 使用 image_picker 插件打开相册
+  /// 用户选择图片后更新 _avatarFile 状态
   Future<void> _pickImage() async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(source: ImageSource.gallery);
@@ -38,6 +73,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  /// 将图片文件转换为 Base64 字符串
+  Future<String> _imageToBase64(File? imageFile) async {
+    if (imageFile == null) return '';
+    try {
+      final bytes = await imageFile.readAsBytes();
+      return base64Encode(bytes);
+    } catch (e) {
+      print('图片转 Base64 失败: $e');
+      return '';
+    }
+  }
+
+  /// 执行注册操作
+  ///
+  /// 流程：
+  /// 1. 验证表单输入
+  /// 2. 调用 AuthService 进行注册（会自动生成后量子密钥对）
+  /// 3. 注册成功显示用户ID对话框
+  /// 4. 注册失败显示错误提示
   Future<void> _register() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
@@ -45,16 +99,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
       });
 
       try {
+        // 将头像图片转换为 Base64
+        final avatarBase64 = await _imageToBase64(_avatarFile);
+
+        // 调用认证服务进行注册
         final user = await _authService.register(
           username: _usernameController.text.trim(),
           password: _passwordController.text.trim(),
-          avatar: _avatarFile?.path ?? '',
+          avatar: avatarBase64,
           bio: _bioController.text.trim(),
         );
 
+        // 显示注册成功对话框，展示用户ID
         showDialog(
           context: context,
-          barrierDismissible: false,
+          barrierDismissible: false, // 禁止点击外部关闭
           builder: (context) => AlertDialog(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             title: Text('注册成功'),
@@ -64,6 +123,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               children: [
                 Text('您的用户ID是：'),
                 SizedBox(height: 12),
+                // 用户ID展示框
                 Container(
                   width: double.infinity,
                   padding: EdgeInsets.all(12),
@@ -91,6 +151,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               TextButton(
                 onPressed: () {
                   Navigator.pop(context);
+                  // 跳转到登录页面
                   Navigator.pushReplacement(
                     context,
                     MaterialPageRoute(builder: (context) => LoginScreen()),
