@@ -785,8 +785,38 @@ class CallService {
       // 验证签名（如果有）
       if (data['signature'] != null && data['sigPublicKey'] != null) {
         print('验证 answer 签名...');
-        // TODO: 实现 answer 签名验证
-        print('✓ Answer 签名验证通过（待实现）');
+        
+        // 确保用户密钥已加载
+        if (_currentUserKeys == null) {
+          print('✗ 用户密钥未加载');
+          _updateState(CallState.error);
+          _cleanup();
+          return;
+        }
+        
+        // 构建与发送方相同格式的消息
+        final answerMessage = _buildAnswerMessageToSign(
+          _currentPeerId!,
+          _currentUserKeys!.userId,
+          data['timestamp'] as String,
+          data['answer'] ?? data['desc']
+        );
+        
+        // 验证签名
+        final isValid = _sigService.verifyMessage(
+          data['sigPublicKey'] as String,
+          answerMessage,
+          data['signature'] as String
+        );
+        
+        if (!isValid) {
+          print('✗ Answer 签名验证失败');
+          _updateState(CallState.error);
+          _cleanup();
+          return;
+        }
+        
+        print('✓ Answer 签名验证通过');
       }
     } catch (e) {
       print('处理 answer 失败: $e');
