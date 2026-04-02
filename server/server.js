@@ -10,7 +10,7 @@
  * 
  * 技术栈：
  * - Express.js: Web应用框架
- * - Socket.io: 实时双向通信
+ * - Socket.io: 实时双向通信（仅用于用户注册和心跳）
  * - MongoDB: 数据库
  * - Helmet: 安全中间件
  * 
@@ -225,16 +225,6 @@ app.get('/health', (req, res) => {
 // ==================== WebSocket事件处理 ====================
 
 /**
- * 存储活跃通话的Map
- * 
- * Key: socket.id
- * Value: { callerId, calleeId, status }
- * 
- * 用于跟踪当前进行中的通话
- */
-const activeCalls = new Map();
-
-/**
  * WebSocket连接事件处理
  * 
  * 当客户端连接到服务器时触发：
@@ -267,185 +257,6 @@ io.on('connection', (socket) => {
   });
 
   /**
-   * 通话请求事件
-   * 
-   * 当用户发起通话时触发
-   * 
-   * 数据格式：{ callerId, calleeId, offer, callType }
-   * - callerId: 发起者ID
-   * - calleeId: 接收者ID
-   * - offer: WebRTC Offer SDP
-   * - callType: 通话类型（audio/video）
-   * 
-   * 流程：
-   * 1. 发起者发送call-request事件
-   * 2. 服务器查找接收者的socket
-   * 3. 如果接收者在线，转发incoming-call事件
-   * 4. 如果接收者不在线，返回错误
-   */
-  socket.on('call-request', (data) => {
-    const { callerId, calleeId, offer, callType } = data;
-    
-    // 验证calleeId是否有效
-    if (calleeId && typeof calleeId === 'string') {
-      // 查找接收者的socket ID
-      const calleeSocketId = userSockets.get(calleeId);
-      
-      if (calleeSocketId) {
-        // 接收者在线，转发通话请求
-        io.to(calleeSocketId).emit('incoming-call', {
-          callerId,                        // 发起者ID
-          offer,                           // WebRTC Offer
-          callType,                        // 通话类型
-          callId: socket.id                // 通话ID（用于后续操作）
-        });
-        
-        // 记录活跃通话
-        activeCalls.set(socket.id, { callerId, calleeId, status: 'calling' });
-      } else {
-        // 接收者不在线，返回错误
-        socket.emit('call-error', { message: '用户不在线' });
-      }
-    } else {
-      console.warn('无效的calleeId:', calleeId);
-      socket.emit('call-error', { message: '无效的用户ID' });
-    }
-  });
-
-  /**
-   * 接受通话事件
-   * 
-   * 当接收者接受通话时触发
-   * 
-   * 数据格式：{ callerId, answer }
-   * - callerId: 发起者ID
-   * - answer: WebRTC Answer SDP
-   * 
-   * 流程：
-   * 1. 接收者发送call-accept事件
-   * 2. 服务器查找发起者的socket
-   * 3. 转发call-accepted事件给发起者
-   * 4. 更新通话状态为connected
-   */
-  socket.on('call-accept', (data) => {
-    const { callerId, answer } = data;
-    
-    // 验证callerId是否有效
-    if (callerId && typeof callerId === 'string') {
-      // 查找发起者的socket ID
-      const callerSocketId = userSockets.get(callerId);
-      
-      if (callerSocketId) {
-        // 转发接受通话的消息
-        io.to(callerSocketId).emit('call-accepted', { answer });
-        
-        // 更新通话状态
-        const call = activeCalls.get(callerSocketId);
-        if (call) {
-          call.status = 'connected';
-        }
-      }
-    }
-  });
-
-  /**
-   * 拒绝通话事件
-   * 
-   * 当接收者拒绝通话时触发
-   * 
-   * 数据格式：{ callerId }
-   * - callerId: 发起者ID
-   * 
-   * 流程：
-   * 1. 接收者发送call-reject事件
-   * 2. 服务器查找发起者的socket
-   * 3. 转发call-rejected事件给发起者
-   * 4. 删除通话记录
-   */
-  socket.on('call-reject', (data) => {
-    const { callerId } = data;
-    
-    // 验证callerId是否有效
-    if (callerId && typeof callerId === 'string') {
-      // 查找发起者的socket ID
-      const callerSocketId = userSockets.get(callerId);
-      
-      if (callerSocketId) {
-        // 转发拒绝通话的消息
-        io.to(callerSocketId).emit('call-rejected', { reason: '用户拒绝接听' });
-        
-        // 删除通话记录
-        activeCalls.delete(callerSocketId);
-      }
-    }
-  });
-
-  /**
-   * 结束通话事件
-   * 
-   * 当任一方结束通话时触发
-   * 
-   * 数据格式：{ targetId }
-   * - targetId: 对方用户ID
-   * 
-   * 流程：
-   * 1. 发送方发送call-end事件
-   * 2. 服务器查找对方的socket
-   * 3. 转发call-ended事件给对方
-   * 4. 清理通话记录
-   */
-  socket.on('call-end', (data) => {
-    const { targetId } = data;
-    
-    // 验证targetId是否有效
-    if (targetId && typeof targetId === 'string') {
-      // 查找对方的socket ID
-      const targetSocketId = userSockets.get(targetId);
-      
-      if (targetSocketId) {
-        // 转发结束通话的消息
-        io.to(targetSocketId).emit('call-ended');
-      }
-      
-      // 清理所有相关的通话记录
-      for (const [key, value] of activeCalls.entries()) {
-        if (value.callerId === targetId || value.calleeId === targetId) {
-          activeCalls.delete(key);
-        }
-      }
-    }
-  });
-
-  /**
-   * ICE候选者交换事件
-   * 
-   * 用于WebRTC NAT穿透
-   * 
-   * 数据格式：{ targetId, candidate }
-   * - targetId: 目标用户ID
-   * - candidate: ICE候选者信息
-   * 
-   * 流程：
-   * 1. 客户端收集到ICE候选者
-   * 2. 发送ice-candidate事件到服务器
-   * 3. 服务器转发给目标用户
-   */
-  socket.on('ice-candidate', (data) => {
-    const { targetId, candidate } = data;
-    
-    // 验证targetId是否有效
-    if (targetId && typeof targetId === 'string') {
-      // 查找目标用户的socket ID
-      const targetSocketId = userSockets.get(targetId);
-      
-      if (targetSocketId) {
-        // 转发ICE候选者
-        io.to(targetSocketId).emit('ice-candidate', { candidate });
-      }
-    }
-  });
-
-  /**
    * 断开连接事件
    * 
    * 当客户端断开连接时触发
@@ -465,9 +276,6 @@ io.on('connection', (socket) => {
         break;
       }
     }
-    
-    // 清理通话记录
-    activeCalls.delete(socket.id);
   });
 });
 

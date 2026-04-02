@@ -711,9 +711,6 @@ class CallService {
         var data = event['content'];
         print('[CallService] 收到音频事件: ${data['type']}');
         switch (data['type']) {
-          case 'offer':
-            _handleVideoOfferMsg(data);
-            break;
           case 'answer':
             _handleVideoAnswerMsg(data);
             break;
@@ -727,9 +724,6 @@ class CallService {
             print('[CallService] 匹配到 reject 事件，调用 _handleRejected');
             _handleRejected();
             break;
-          case 'accept':
-            _onOffer();
-            break;
           case 'invite':
             _handleIncomingCall(data);
             break;
@@ -740,27 +734,7 @@ class CallService {
     });
   }
 
-  /// 处理 offer 消息
-  Future<void> _handleVideoOfferMsg(Map<String, dynamic> data) async {
-    try {
-      print('处理 offer 消息');
-      if (_peerConnection == null) return;
 
-      final desc = RTCSessionDescription(data['desc']['sdp'], data['desc']['type']);
-      await _peerConnection!.setRemoteDescription(desc);
-
-      final answer = await _peerConnection!.createAnswer();
-      await _peerConnection!.setLocalDescription(answer);
-
-      await _audioApi.answer(_currentPeerId!, {
-        'sdp': answer.sdp,
-        'type': answer.type,
-      });
-      print('已发送 answer');
-    } catch (e) {
-      print('处理 offer 失败: $e');
-    }
-  }
 
   /// 处理 answer 消息
   Future<void> _handleVideoAnswerMsg(Map<String, dynamic> data) async {
@@ -768,8 +742,7 @@ class CallService {
       print('处理 answer 消息');
       if (_peerConnection == null) return;
 
-      // 支持两种格式：desc（旧格式）和 answer（新格式）
-      final answerData = data['answer'] ?? data['desc'];
+      final answerData = data['answer'] as Map<String, dynamic>?;
       if (answerData == null) {
         print('Answer 数据为空');
         return;
@@ -799,7 +772,7 @@ class CallService {
           _currentPeerId!,
           _currentUserKeys!.userId,
           data['timestamp'] as String,
-          data['answer'] ?? data['desc']
+          answerData
         );
         
         // 验证签名
@@ -841,24 +814,7 @@ class CallService {
     }
   }
 
-  /// 发送 offer
-  Future<void> _onOffer() async {
-    try {
-      print('创建 offer');
-      if (_peerConnection == null) return;
 
-      final offer = await _peerConnection!.createOffer();
-      await _peerConnection!.setLocalDescription(offer);
-
-      await _audioApi.offer(_currentPeerId!, {
-        'sdp': offer.sdp,
-        'type': offer.type,
-      });
-      print('已发送 offer');
-    } catch (e) {
-      print('创建 offer 失败: $e');
-    }
-  }
 
   /// 处理来电
   void _handleIncomingCall(Map<String, dynamic> data) {
@@ -1027,36 +983,12 @@ class CallService {
       
       await _createPeerConnectionInternal();
       
-      if (_isCaller) {
-        await _createAndSendOffer();
-      }
+      // 重连时，由于使用的是新版信令，不需要重新发送offer
+      // 连接会通过ICE候选者交换自动恢复
     });
   }
 
-  /// 创建并发送 Offer
-  Future<void> _createAndSendOffer() async {
-    try {
-      if (_peerConnection == null || _currentPeerId == null) return;
 
-      print('重新创建并发送 offer...');
-      
-      final offer = await _peerConnection!.createOffer({
-        'offerToReceiveAudio': true,
-        'offerToReceiveVideo': false,
-      });
-      
-      await _peerConnection!.setLocalDescription(offer);
-      
-      await _audioApi.offer(_currentPeerId!, {
-        'sdp': offer.sdp,
-        'type': offer.type,
-      });
-
-      print('重新发送 offer 成功');
-    } catch (e) {
-      print('重新创建 offer 失败: $e');
-    }
-  }
 
   /// 挂断通话
   void handleHangup() {

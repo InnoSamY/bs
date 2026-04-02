@@ -12,12 +12,7 @@ import 'package:socket_io_client/socket_io_client.dart' as io;
 /// 4. 事件广播
 /// 
 /// 支持的事件：
-/// - audio: 音频信令
-/// - incoming-call: 来电
-/// - call-accepted: 通话被接受
-/// - call-rejected: 通话被拒绝
-/// - call-ended: 通话结束
-/// - ice-candidate: ICE 候选者
+/// - audio: 音频信令（来自 HTTP 路由的转发）
 class WebSocketService {
   static final WebSocketService _instance = WebSocketService._internal();
   factory WebSocketService() => _instance;
@@ -117,46 +112,6 @@ class WebSocketService {
       _socket!.on('audio', (data) {
         print('收到音频信令: $data');
         eventController.add({'type': 'on-receive-audio', 'content': data});
-      });
-
-      _socket!.on('incoming-call', (data) {
-        print('收到来电: $data');
-        eventController.add({'type': 'on-receive-audio', 'content': {
-          'type': 'invite',
-          'fromUserId': data['callerId'],
-          'callType': data['callType'],
-        }});
-      });
-
-      _socket!.on('call-accepted', (data) {
-        print('通话被接受: $data');
-        eventController.add({'type': 'on-receive-audio', 'content': {
-          'type': 'accept',
-          'answer': data['answer'],
-        }});
-      });
-
-      _socket!.on('call-rejected', (data) {
-        print('通话被拒绝: $data');
-        eventController.add({'type': 'on-receive-audio', 'content': {
-          'type': 'hangup',
-          'reason': data['reason'],
-        }});
-      });
-
-      _socket!.on('call-ended', (data) {
-        print('通话结束: $data');
-        eventController.add({'type': 'on-receive-audio', 'content': {
-          'type': 'hangup',
-        }});
-      });
-
-      _socket!.on('ice-candidate', (data) {
-        print('收到ICE候选者: $data');
-        eventController.add({'type': 'on-receive-audio', 'content': {
-          'type': 'candidate',
-          'candidate': data['candidate'],
-        }});
       });
 
       return completer.future.timeout(Duration(seconds: 10), onTimeout: () {

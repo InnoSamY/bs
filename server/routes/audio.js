@@ -4,27 +4,26 @@
  * 这个文件包含所有音频通话相关的 API 路由。
  * 
  * 主要功能：
- * 1. 发起呼叫邀请（invite）
- * 2. 接听/拒绝通话（accept）
- * 3. WebRTC 信令交换（offer/answer/candidate）
+ * 1. 安全邀请 V2（secure-invite-v2）
+ * 2. 安全应答 V2（answer-v2）
+ * 3. ICE 候选者交换（candidate）
  * 4. 挂断通话（hangup）
- * 5. 后量子加密相关（secure-invite/key-exchange/update-keys）
+ * 5. 拒绝通话（reject）
  * 6. 用户状态和公钥查询
  * 
  * 信令流程：
- * 1. 呼叫方 -> 发起邀请 -> 服务器 -> 被叫方
- * 2. 被叫方 -> 接听 -> 服务器 -> 呼叫方
- * 3. 双方 -> 交换 SDP (offer/answer)
- * 4. 双方 -> 交换 ICE 候选者 (candidate)
- * 5. 任意一方 -> 挂断 -> 服务器 -> 另一方
+ * 1. 呼叫方 -> 发起安全邀请 V2 -> 服务器 -> 被叫方
+ * 2. 被叫方 -> 发送安全应答 V2 -> 服务器 -> 呼叫方
+ * 3. 双方 -> 交换 ICE 候选者 (candidate)
+ * 4. 任意一方 -> 挂断/拒绝 -> 服务器 -> 另一方
  * 
  * 认证要求：
- * - 大部分路由需要 JWT 认证
+ * - 所有路由需要 JWT 认证
  * - 使用 authMiddleware 中间件进行验证
  * 
  * WebSocket 事件：
  * - audio: 音频通话相关事件
- * - 类型：invite, accept, offer, answer, candidate, hangup, key-exchange
+ * - 类型：invite, answer, candidate, hangup, reject
  */
 
 // 导入 Express 框架
@@ -40,200 +39,7 @@ const router = express.Router();
 // 导入用户 socket 映射（用于 WebSocket 路由）
 const userSockets = require('./audio-sockets');
 
-/**
- * 发起音频通话邀请
- * 
- * 路由：POST /api/audio/invite
- * 认证：需要（JWT）
- * 
- * 功能：
- * 1. 验证用户身份
- * 2. 检查被叫方是否在线
- * 3. 通过 WebSocket 转发邀请
- * 
- * 请求体：
- * - userId: 被叫方用户ID
- * - isOnlyAudio: 是否仅音频（默认为 true）
- * 
- * WebSocket 事件：
- * - type: 'invite'
- * - fromUserId: 呼叫方ID
- * - fromUserName: 呼叫方用户名
- * - isOnlyAudio: 是否仅音频
- */
-router.post('/invite', authMiddleware, async (req, res) => {
-  try {
-    const { userId, isOnlyAudio = true } = req.body;
-    const callerId = req.user._id.toString();
-    const callerInfo = await User.findById(callerId).select('username');
 
-    const calleeSocketId = userSockets.get(userId);
-    
-    if (!calleeSocketId) {
-      return res.json({
-        success: false,
-        code: -1,
-        message: '用户不在线'
-      });
-    }
-
-    const io = req.app.get('io');
-    io.to(calleeSocketId).emit('audio', {
-      type: 'invite',
-      fromUserId: callerId,
-      fromUserName: callerInfo?.username || '未知用户',
-      isOnlyAudio: isOnlyAudio !== false
-    });
-
-    console.log(`音频通话邀请: ${callerId} -> ${userId}`);
-
-    res.json({ success: true, code: 0 });
-  } catch (error) {
-    console.error('invite错误:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-/**
- * 接受音频通话
- * 
- * 路由：POST /api/audio/accept
- * 认证：需要（JWT）
- * 
- * 功能：
- * 1. 被叫方接受通话邀请
- * 2. 通知呼叫方开始 WebRTC 协商
- * 
- * 请求体：
- * - userId: 呼叫方用户ID
- * 
- * WebSocket 事件：
- * - type: 'accept'
- * - fromUserId: 被叫方ID
- */
-router.post('/accept', authMiddleware, async (req, res) => {
-  try {
-    const { userId } = req.body;
-    const accepterId = req.user._id.toString();
-
-    const targetSocketId = userSockets.get(userId);
-    
-    if (!targetSocketId) {
-      return res.json({
-        success: false,
-        code: -1,
-        message: '用户不在线'
-      });
-    }
-
-    const io = req.app.get('io');
-    io.to(targetSocketId).emit('audio', {
-      type: 'accept',
-      fromUserId: accepterId
-    });
-
-    res.json({ success: true, code: 0 });
-  } catch (error) {
-    console.error('accept错误:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-/**
- * 发送 WebRTC Offer
- * 
- * 路由：POST /api/audio/offer
- * 认证：需要（JWT）
- * 
- * 功能：
- * 1. 转发 WebRTC offer 到对方
- * 2. 开始媒体协商
- * 
- * 请求体：
- * - userId: 目标用户ID
- * - desc: SDP 描述
- * 
- * WebSocket 事件：
- * - type: 'offer'
- * - fromUserId: 发送方ID
- * - desc: SDP 描述
- */
-router.post('/offer', authMiddleware, async (req, res) => {
-  try {
-    const { userId, desc } = req.body;
-    const senderId = req.user._id.toString();
-
-    const targetSocketId = userSockets.get(userId);
-    
-    if (!targetSocketId) {
-      return res.json({
-        success: false,
-        code: -1,
-        message: '用户不在线'
-      });
-    }
-
-    const io = req.app.get('io');
-    io.to(targetSocketId).emit('audio', {
-      type: 'offer',
-      fromUserId: senderId,
-      desc: desc
-    });
-
-    res.json({ success: true, code: 0 });
-  } catch (error) {
-    console.error('offer错误:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-/**
- * 发送 WebRTC Answer
- * 
- * 路由：POST /api/audio/answer
- * 认证：需要（JWT）
- * 
- * 功能：
- * 1. 转发 WebRTC answer 到对方
- * 2. 完成媒体协商
- * 
- * 请求体：
- * - userId: 目标用户ID
- * - desc: SDP 描述
- * 
- * WebSocket 事件：
- * - type: 'answer'
- * - fromUserId: 发送方ID
- * - desc: SDP 描述
- */
-router.post('/answer', authMiddleware, async (req, res) => {
-  try {
-    const { userId, desc } = req.body;
-    const senderId = req.user._id.toString();
-
-    const targetSocketId = userSockets.get(userId);
-    
-    if (!targetSocketId) {
-      return res.json({
-        success: false,
-        code: -1,
-        message: '用户不在线'
-      });
-    }
-
-    const io = req.app.get('io');
-    io.to(targetSocketId).emit('audio', {
-      type: 'answer',
-      fromUserId: senderId,
-      desc: desc
-    });
-
-    res.json({ success: true, code: 0 });
-  } catch (error) {
-    console.error('answer错误:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
 
 /**
  * 发送 WebRTC Answer V2（安全版本）
@@ -565,69 +371,7 @@ router.get('/status/:userId', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * 发起安全音频通话邀请（带后量子加密）
- * 
- * 路由：POST /api/audio/secure-invite
- * 认证：需要（JWT）
- * 
- * 功能：
- * 1. 发起带数字签名的安全通话邀请
- * 2. 包含 ML-DSA 公钥
- * 3. 用于后量子安全通话
- * 
- * 请求体：
- * - userId: 被叫方用户ID
- * - isOnlyAudio: 是否仅音频
- * - signature: 通话请求签名
- * - publicKey: ML-DSA 公钥
- * - timestamp: 时间戳
- * 
- * 安全特性：
- * - 签名验证：防止通话请求被篡改
- * - 公钥交换：为后续密钥交换做准备
- */
-router.post('/secure-invite', authMiddleware, async (req, res) => {
-  try {
-    const { userId, isOnlyAudio, signature, publicKey, timestamp } = req.body;
-    const callerId = req.user._id.toString();
-    const callerInfo = await User.findById(callerId).select('username');
 
-    // 将用户的签名公钥存储到数据库
-    await User.findByIdAndUpdate(callerId, {
-      signaturePublicKey: publicKey
-    });
-
-    const calleeSocketId = userSockets.get(userId);
-    
-    if (!calleeSocketId) {
-      return res.json({
-        success: false,
-        code: -1,
-        message: '用户不在线'
-      });
-    }
-
-    const io = req.app.get('io');
-    // 发送带加密信息的邀请
-    io.to(calleeSocketId).emit('audio', {
-      type: 'invite',
-      fromUserId: callerId,
-      fromUserName: callerInfo?.username || '未知用户',
-      isOnlyAudio: isOnlyAudio !== false,
-      signature: signature,      // 通话请求签名
-      publicKey: publicKey,    // ML-DSA 公钥
-      timestamp: timestamp      // 时间戳
-    });
-
-    console.log(`安全通话邀请: ${callerId} -> ${userId}`);
-
-    res.json({ success: true, code: 0 });
-  } catch (error) {
-    console.error('secure-invite错误:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
 
 /**
  * 发起安全音频通话邀请 V2（带后量子加密和 WebRTC Offer）
@@ -694,53 +438,7 @@ router.post('/secure-invite-v2', authMiddleware, async (req, res) => {
   }
 });
 
-/**
- * 后量子密钥交换
- * 
- * 路由：POST /api/audio/key-exchange
- * 认证：需要（JWT）
- * 
- * 功能：
- * 1. 转发 ML-KEM 密钥封装密文
- * 2. 用于建立后量子安全会话
- * 
- * 请求体：
- * - userId: 目标用户ID
- * - keyData: { ciphertext } 包含 ML-KEM 密文
- * 
- * 安全流程：
- * 1. 发送方使用接收方公钥进行 ML-KEM 封装
- * 2. 将密文发送给接收方
- * 3. 接收方使用私钥解封装，获得共享密钥
- */
-router.post('/key-exchange', authMiddleware, async (req, res) => {
-  try {
-    const { userId, keyData } = req.body;
-    const senderId = req.user._id.toString();
 
-    const targetSocketId = userSockets.get(userId);
-    
-    if (!targetSocketId) {
-      return res.json({
-        success: false,
-        code: -1,
-        message: '用户不在线'
-      });
-    }
-
-    const io = req.app.get('io');
-    io.to(targetSocketId).emit('audio', {
-      type: 'key-exchange',
-      fromUserId: senderId,
-      keyData: keyData
-    });
-
-    res.json({ success: true, code: 0 });
-  } catch (error) {
-    console.error('key-exchange错误:', error);
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
 
 // 导出路由模块
 module.exports = router;
