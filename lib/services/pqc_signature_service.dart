@@ -97,6 +97,7 @@ class PqcSignatureService {
   /// 返回：Base64 编码的签名
   String signMessage(String privateKey, String message) {
     print('执行后量子签名（基于哈希的原型实现）...');
+    print('  原文: $message');
 
     final privateKeyBytes = base64Decode(privateKey);
     const int bits = 256;
@@ -107,16 +108,12 @@ class PqcSignatureService {
       throw ArgumentError('私钥格式错误，长度应为 $expectedPrivateKeyLength 字节');
     }
 
-    // 计算消息哈希
     final messageBytes = utf8.encode(message);
     final messageHash = sha256.convert(messageBytes).bytes;
 
-    // 构建签名
     final signatureBuilder = BytesBuilder();
     for (int i = 0; i < bits; i++) {
-      // 获取哈希的第 i 位
       final bit = (messageHash[i ~/ 8] >> (i % 8)) & 1;
-      // 根据位值选择对应的私钥部分
       final index = (i * 2 + bit) * keySize;
       final keyPart = privateKeyBytes.sublist(index, index + keySize);
       signatureBuilder.add(keyPart);
@@ -125,6 +122,7 @@ class PqcSignatureService {
     final signature = base64Encode(signatureBuilder.toBytes());
 
     print('✓ 签名成功');
+    print('  签名: $signature');
     print('  签名长度: ${signatureBuilder.length} 字节');
 
     return signature;
@@ -145,6 +143,8 @@ class PqcSignatureService {
   /// 返回：签名是否有效
   bool verifyMessage(String publicKey, String message, String signature) {
     print('验证后量子签名（基于哈希的原型实现）...');
+    print('  原文: $message');
+    print('  签名: $signature');
 
     try {
       final publicKeyBytes = base64Decode(publicKey);
@@ -164,23 +164,16 @@ class PqcSignatureService {
         return false;
       }
 
-      // 计算消息哈希
       final messageBytes = utf8.encode(message);
       final messageHash = sha256.convert(messageBytes).bytes;
 
-      // 验证签名
       for (int i = 0; i < bits; i++) {
-        // 获取哈希的第 i 位
         final bit = (messageHash[i ~/ 8] >> (i % 8)) & 1;
-        // 从签名中获取对应部分
         final sigIndex = i * keySize;
         final sigPart = signatureBytes.sublist(sigIndex, sigIndex + keySize);
-        // 计算签名部分的哈希
         final sigHash = sha256.convert(sigPart).bytes;
-        // 从公钥中获取对应部分
         final pubIndex = (i * 2 + bit) * keySize;
         final pubPart = publicKeyBytes.sublist(pubIndex, pubIndex + keySize);
-        // 比较哈希值和公钥部分
         if (!_constantTimeEquals(sigHash, pubPart)) {
           print('签名验证失败：第 $i 位不匹配');
           return false;

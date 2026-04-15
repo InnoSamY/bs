@@ -252,37 +252,34 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
     _isHandlingIncomingCall = true;
 
-    // 查找联系人信息，如果不存在则创建临时联系人
-    final contact = _contacts.firstWhere(
-      (c) => c.id == callerId,
-      orElse: () => Contact(
-        id: callerId,
-        username: callerName ?? '未知用户',
-        avatar: '',
-        bio: '',
-        kemPublicKey: null,
-        sigPublicKey: sigPublicKey,
-      ),
-    );
+    try {
+      // 查找联系人信息
+      final contact = _contacts.firstWhere(
+        (c) => c.id == callerId,
+      );
 
-    if (mounted) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => CallScreen(
-            contact: contact,
-            callType: CallType.incoming,
-            kemCiphertext: kemCiphertext,
-            signature: signature,
-            callerSigPublicKey: sigPublicKey,
-            timestamp: timestamp,
-            offer: offer,
+      if (mounted) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => CallScreen(
+              contact: contact,
+              callType: CallType.incoming,
+              kemCiphertext: kemCiphertext,
+              signature: signature,
+              callerSigPublicKey: sigPublicKey,
+              timestamp: timestamp,
+              offer: offer,
+            ),
           ),
-        ),
-      ).then((_) {
-        // 页面关闭后重置标志
-        _isHandlingIncomingCall = false;
-      });
+        ).then((_) {
+          // 页面关闭后重置标志
+          _isHandlingIncomingCall = false;
+        });
+      }
+    } catch (e) {
+      print('处理来电失败：联系人不存在');
+      _isHandlingIncomingCall = false;
     }
   }
 

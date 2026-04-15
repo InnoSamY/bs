@@ -56,6 +56,7 @@ class PqcKemService {
   /// - sharedSecret: Base64 编码的共享密钥
   Map<String, String> encapsulate(String publicKey) {
     print('执行 ML-KEM 密钥封装...');
+    print('  公钥: $publicKey');
     
     final publicKeyBytes = base64Decode(publicKey);
     final (ciphertext, sharedSecret) = _kyberKem.encapsulate(publicKeyBytes);
@@ -64,7 +65,9 @@ class PqcKemService {
     final sharedSecretBase64 = base64Encode(sharedSecret);
 
     print('✓ ML-KEM 密钥封装成功');
+    print('  密文: $ciphertextBase64');
     print('  密文长度: ${ciphertext.length} 字节');
+    print('  共享密钥: $sharedSecretBase64');
     print('  共享密钥长度: ${sharedSecret.length} 字节');
 
     return {
@@ -85,6 +88,7 @@ class PqcKemService {
   /// - sharedSecret: Base64 编码的共享密钥
   String decapsulate(String privateKey, String ciphertext) {
     print('执行 ML-KEM 密钥解封装...');
+    print('  密文: $ciphertext');
     
     final privateKeyBytes = base64Decode(privateKey);
     final ciphertextBytes = base64Decode(ciphertext);
@@ -93,6 +97,7 @@ class PqcKemService {
     final sharedSecretBase64 = base64Encode(sharedSecret);
 
     print('✓ ML-KEM 密钥解封装成功');
+    print('  共享密钥: $sharedSecretBase64');
     print('  共享密钥长度: ${sharedSecret.length} 字节');
 
     return sharedSecretBase64;

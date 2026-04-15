@@ -33,6 +33,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter_base/services/websocket_service.dart';
 import 'package:flutter_base/services/audio_api.dart';
 import 'package:flutter_base/services/pqc_kem_service.dart';
@@ -101,6 +102,7 @@ class CallService {
   final _sigService = PqcSignatureService();
   final _cryptoService = CryptoService();
   final _authService = AuthService();
+  final _audioPlayer = AudioPlayer();
 
   // ==================== 媒体流 ====================
   RTCPeerConnection? _peerConnection;
@@ -179,12 +181,10 @@ class CallService {
   /// 从本地存储加载用户的密钥对
   Future<void> initializeKeys() async {
     if (_currentUserKeys != null) {
-      print('密钥已加载，跳过');
       return;
     }
 
     try {
-      print('加载用户密钥...');
       _currentUserKeys = await _authService.getCurrentUserKeys();
       
       if (_currentUserKeys == null) {
@@ -195,7 +195,6 @@ class CallService {
       print('  KEM 公钥长度: ${base64Decode(_currentUserKeys!.kemPublicKey).length} 字节');
       print('  签名公钥长度: ${base64Decode(_currentUserKeys!.sigPublicKey).length} 字节');
     } catch (e) {
-      print('密钥加载失败: $e');
       throw Exception('密钥加载失败: $e');
     }
   }
@@ -211,7 +210,6 @@ class CallService {
       'kemPublicKey': kemPublicKey,
       'sigPublicKey': sigPublicKey,
     };
-    print('已缓存联系人 $contactId 的公钥');
   }
 
   /// 获取联系人公钥
@@ -307,6 +305,9 @@ class CallService {
   /// - calleeKemPublicKey: 被叫方 ML-KEM 公钥
   /// - calleeSigPublicKey: 被叫方签名公钥
   /// - isOnlyAudio: 是否仅音频通话
+  // 通话开始时间
+  DateTime? _callStartTime;
+
   Future<void> initiateCall(
     String calleeId, 
     String calleeKemPublicKey, 
@@ -314,7 +315,9 @@ class CallService {
     bool isOnlyAudio = true,
   }) async {
     try {
-      print('发起通话到 $calleeId...');
+      // 记录通话开始时间（测试一）
+      _callStartTime = DateTime.now();
+      print('测试一：通话建立开始时间: ${_callStartTime!.toString()}');
       
       // 设置通话信息
       _isCaller = true;
@@ -329,9 +332,14 @@ class CallService {
       // 加载用户密钥
       await initializeKeys();
 
-      // 执行 ML-KEM 密钥封装
+      // 执行 ML-KEM 密钥封装（测试二）
       print('执行 ML-KEM 密钥封装...');
+      final kemStartTime = DateTime.now();
       final encapsulation = _kemService.encapsulate(calleeKemPublicKey);
+      final kemEndTime = DateTime.now();
+      final kemDuration = kemEndTime.difference(kemStartTime).inMilliseconds;
+      print('测试二：ML-KEM 封装耗时: ${kemDuration}ms');
+      
       final sharedSecret = encapsulation['sharedSecret']!;
       final ciphertext = encapsulation['ciphertext']!;
       
@@ -349,19 +357,32 @@ class CallService {
       final offer = await _peerConnection!.createOffer();
       await _peerConnection!.setLocalDescription(offer);
 
+      // 等待 ICE 候选者收集完成
+      await _waitForIceGatheringComplete();
+
+      // 获取包含 ICE 候选者的完整 offer
+      final completeOffer = await _peerConnection!.getLocalDescription();
+      if (completeOffer == null) {
+        throw Exception('获取本地描述失败');
+      }
+
       // 构建呼叫消息
       final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
       final offerMap = {
-        'sdp': offer.sdp,
-        'type': offer.type,
+        'sdp': completeOffer.sdp,
+        'type': completeOffer.type,
       };
+      
+      // 加密 WebRTC offer
+      final offerJson = jsonEncode(offerMap);
+      final encryptedOffer = _cryptoService.encryptAesGcm(aesKey, offerJson);
       
       // 使用统一方法构建签名原文
       final callMessage = _buildInviteMessageToSign(
         _currentUserKeys!.userId,
         calleeId,
         timestamp,
-        offerMap,
+        encryptedOffer, // 传递加密后的offer
         isOnlyAudio,
         ciphertext,
       );
@@ -371,7 +392,6 @@ class CallService {
         _currentUserKeys!.sigSecretKey, 
         callMessage
       );
-      print('✓ 呼叫消息已签名');
 
       // 发送带签名的呼叫请求
       final result = await _audioApi.secureInviteV2(
@@ -380,20 +400,15 @@ class CallService {
         ciphertext,
         signature,
         _currentUserKeys!.sigPublicKey,
-        offer.toMap(),
+        encryptedOffer, // 发送加密后的offer
         timestamp,
       );
-      
-      print('secureInviteV2 结果: $result');
       
       if (result['code'] == -1) {
         throw Exception(result['message'] ?? '用户不在线');
       }
-      
-      print('✓ 呼叫请求已发送');
 
     } catch (e) {
-      print('发起呼叫失败: $e');
       _updateState(CallState.error);
       _cleanup();
       throw Exception('发起呼叫失败: $e');
@@ -418,8 +433,6 @@ class CallService {
     String signature,
   ) async {
     try {
-      print('接听来自 $callerId 的通话...');
-      
       if (_currentPeerId == null) {
         throw Exception('没有待接听的通话');
       }
@@ -435,7 +448,7 @@ class CallService {
         callerId,
         _currentUserKeys!.userId,
         timestamp,
-        offer,
+        offer, // offer 是加密的
         _isOnlyAudio,
         kemCiphertext,
       );
@@ -447,19 +460,22 @@ class CallService {
       );
 
       if (!isValid) {
-        print('✗ 签名验证失败，拒绝通话');
         _updateState(CallState.error);
         _cleanup();
         throw Exception('签名验证失败，通话被拒绝');
       }
       print('✓ 签名验证成功');
 
-      // 执行 ML-KEM 密钥解封装
+      // 执行 ML-KEM 密钥解封装（测试二）
       print('执行 ML-KEM 密钥解封装...');
+      final decapsulateStartTime = DateTime.now();
       final sharedSecret = _kemService.decapsulate(
         _currentUserKeys!.kemSecretKey,
         kemCiphertext
       );
+      final decapsulateEndTime = DateTime.now();
+      final decapsulateDuration = decapsulateEndTime.difference(decapsulateStartTime).inMilliseconds;
+      print('测试二：ML-KEM 解封装耗时: ${decapsulateDuration}ms');
       
       // 派生 AES-256 密钥并存储
       final aesKey = _deriveAesKey(sharedSecret);
@@ -467,31 +483,53 @@ class CallService {
       print('✓ 会话密钥已恢复并派生为 AES-256 密钥');
       print('  AES 密钥长度: ${base64Decode(aesKey).length} 字节');
 
+      // 解密 WebRTC offer
+      final offerJson = _cryptoService.decryptAesGcm(
+        aesKey,
+        offer['ciphertext']!,
+        offer['iv']!,
+        offer['tag']!
+      );
+      final decryptedOffer = jsonDecode(offerJson);
+
       // 初始化媒体设备
       await _initializeLocalStream();
       await _createPeerConnectionInternal();
 
       // 设置远程描述（offer）
-      final remoteDesc = RTCSessionDescription(offer['sdp'], offer['type']);
+      final remoteDesc = RTCSessionDescription(decryptedOffer['sdp'], decryptedOffer['type']);
       await _peerConnection!.setRemoteDescription(remoteDesc);
 
       // 创建 answer
       final answer = await _peerConnection!.createAnswer();
       await _peerConnection!.setLocalDescription(answer);
 
+      // 等待 ICE 候选者收集完成
+      await _waitForIceGatheringComplete();
+
+      // 获取包含 ICE 候选者的完整 answer
+      final completeAnswer = await _peerConnection!.getLocalDescription();
+      if (completeAnswer == null) {
+        throw Exception('获取本地描述失败');
+      }
+
       // 对 answer 签名
       final answerTimestamp = DateTime.now().millisecondsSinceEpoch.toString();
       final answerMap = {
-        'sdp': answer.sdp,
-        'type': answer.type,
+        'sdp': completeAnswer.sdp,
+        'type': completeAnswer.type,
       };
+      
+      // 加密 WebRTC answer
+      final answerJson = jsonEncode(answerMap);
+      final encryptedAnswer = _cryptoService.encryptAesGcm(aesKey, answerJson);
       
       // 使用统一方法构建签名原文
       final answerMessage = _buildAnswerMessageToSign(
         _currentUserKeys!.userId,
         callerId,
         answerTimestamp,
-        answerMap,
+        encryptedAnswer, // 传递加密后的answer
       );
 
       final answerSignature = _sigService.signMessage(
@@ -502,26 +540,40 @@ class CallService {
       // 发送带签名的 answer
       final result = await _audioApi.answerV2(
         callerId,
-        answer.toMap(),
+        encryptedAnswer, // 发送加密后的answer
         answerSignature,
         _currentUserKeys!.sigPublicKey,
         answerTimestamp,
       );
-      
-      print('answerV2 结果: $result');
       
       if (result['code'] == -1) {
         throw Exception(result['message'] ?? '发送应答失败');
       }
       
       _toUserIsReady = true;
-      print('✓ 通话已接听');
 
     } catch (e) {
-      print('接听通话失败: $e');
       _updateState(CallState.error);
       _cleanup();
       throw Exception('接听通话失败: $e');
+    }
+  }
+
+  /// 等待 ICE 候选者收集完成
+  Future<void> _waitForIceGatheringComplete() async {
+    const timeout = Duration(seconds: 5);
+    const checkInterval = Duration(milliseconds: 100);
+    
+    final startTime = DateTime.now();
+    
+    while (DateTime.now().difference(startTime) < timeout) {
+      final gatheringState = await _peerConnection!.getIceGatheringState();
+      
+      if (gatheringState == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+        return;
+      }
+      
+      await Future.delayed(checkInterval);
     }
   }
 
@@ -531,26 +583,20 @@ class CallService {
   /// 不更新本地状态。状态更新由拨号方收到 reject 事件后处理。
   Future<void> rejectCall() async {
     if (_isRejecting) {
-      print('[CallService] rejectCall 已在进行中，跳过');
       return;
     }
     
     _isRejecting = true;
-    print('[CallService] rejectCall 被调用（接收方拒绝），_currentPeerId: $_currentPeerId');
     
     if (_currentPeerId != null) {
       try {
         await _audioApi.reject(_currentPeerId!);
-        print('[CallService] reject 请求已发送');
       } catch (e) {
-        print('[CallService] reject 请求失败: $e');
+        // 忽略错误
       }
-    } else {
-      print('[CallService] 警告: _currentPeerId 为空，无法发送 reject');
     }
     
     _cleanup();
-    print('[CallService] 接收方拒绝通话，清理资源完成');
     _isRejecting = false;
   }
 
@@ -594,7 +640,6 @@ class CallService {
       'iceCandidatePoolSize': 10,
     };
 
-    print('创建 PeerConnection');
     _peerConnection = await createPeerConnection(config);
 
     if (_localStream != null) {
@@ -607,11 +652,16 @@ class CallService {
     _peerConnection!.onIceConnectionState = _handleICEConnectionStateChangeEvent;
     _peerConnection!.onTrack = _handleTrackEvent;
     _peerConnection!.onConnectionState = (state) {
-      print('连接状态: $state');
+      // 测试一：记录通话建立完成时间
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected && _callStartTime != null) {
+        final callEndTime = DateTime.now();
+        final callDuration = callEndTime.difference(_callStartTime!).inMilliseconds;
+        print('测试一：通话建立完成时间: ${callEndTime.toString()}');
+        print('测试一：通话建立时延: ${callDuration}ms');
+      }
     };
 
     _peerConnection!.onDataChannel = (channel) {
-      print('收到数据通道: ${channel.label}');
       _dataChannel = channel;
       _dataChannel!.onMessage = (RTCDataChannelMessage message) {
         _handleSecureMessage(message.text);
@@ -642,19 +692,14 @@ class CallService {
       };
 
       _dataChannel!.onDataChannelState = (state) {
-        print('数据通道状态: $state');
       };
-
-      print('数据通道初始化成功');
     } catch (e) {
-      print('初始化数据通道失败: $e');
     }
   }
 
   /// 处理 ICE 候选者
   Future<void> _handleICECandidateEvent(RTCIceCandidate candidate) async {
     if (_currentPeerId != null && candidate.candidate != null) {
-      print('发送 ICE 候选者');
       await _audioApi.candidate(_currentPeerId!, {
         'candidate': candidate.candidate,
         'sdpMid': candidate.sdpMid,
@@ -665,7 +710,6 @@ class CallService {
 
   /// 处理 ICE 连接状态变化
   void _handleICEConnectionStateChangeEvent(RTCIceConnectionState? state) {
-    print('ICE 连接状态: $state');
     if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
       _toUserIsReady = true;
       _reconnectAttempts = 0;
@@ -679,10 +723,8 @@ class CallService {
       });
       _updateState(CallState.connected);
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
-      print('ICE 连接断开，尝试重连...');
       _attemptReconnect();
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
-      print('ICE 连接失败，尝试重连...');
       _attemptReconnect();
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
       handleHangup();
@@ -691,7 +733,6 @@ class CallService {
 
   /// 处理远程轨道事件
   void _handleTrackEvent(RTCTrackEvent event) {
-    print('收到远程流: ${event.track.kind}');
     if (event.streams.isNotEmpty) {
       _remoteStream = event.streams[0];
     }
@@ -700,16 +741,13 @@ class CallService {
   /// 初始化视频事件监听
   void audioEvent() {
     if (_isAudioEventInitialized) {
-      print('audioEvent 已初始化，跳过');
       return;
     }
     _isAudioEventInitialized = true;
 
     _subscription = _webSocketService.eventStream.listen((event) {
-      print('[CallService] 收到 WebSocket 事件: ${event['type']}');
       if (event['type'] == 'on-receive-audio') {
         var data = event['content'];
-        print('[CallService] 收到音频事件: ${data['type']}');
         switch (data['type']) {
           case 'answer':
             _handleVideoAnswerMsg(data);
@@ -721,14 +759,11 @@ class CallService {
             handleHangup();
             break;
           case 'reject':
-            print('[CallService] 匹配到 reject 事件，调用 _handleRejected');
             _handleRejected();
             break;
           case 'invite':
             _handleIncomingCall(data);
             break;
-          default:
-            print('[CallService] 未知事件类型: ${data['type']}');
         }
       }
     });
@@ -739,29 +774,32 @@ class CallService {
   /// 处理 answer 消息
   Future<void> _handleVideoAnswerMsg(Map<String, dynamic> data) async {
     try {
-      print('处理 answer 消息');
       if (_peerConnection == null) return;
 
-      final answerData = data['answer'] as Map<String, dynamic>?;
-      if (answerData == null) {
-        print('Answer 数据为空');
+      // 检查 PeerConnection 状态，避免重复设置远程描述
+      final currentState = await _peerConnection!.getConnectionState();
+      
+      // 如果已经处于稳定状态或连接状态，忽略重复的 answer
+      if (currentState == RTCPeerConnectionState.RTCPeerConnectionStateConnected ||
+          currentState == RTCPeerConnectionState.RTCPeerConnectionStateConnecting) {
         return;
       }
 
-      final remoteDesc = RTCSessionDescription(
-        answerData['sdp'],
-        answerData['type'],
-      );
-      await _peerConnection!.setRemoteDescription(remoteDesc);
-      print('已设置远程描述');
-      
+      final answerData = data['answer'] as Map<String, dynamic>?;
+      if (answerData == null) {
+        return;
+      }
+
+      // 检查是否已经设置过远程描述
+      final currentRemoteDesc = await _peerConnection!.getRemoteDescription();
+      if (currentRemoteDesc != null) {
+        return;
+      }
+
       // 验证签名（如果有）
       if (data['signature'] != null && data['sigPublicKey'] != null) {
-        print('验证 answer 签名...');
-        
         // 确保用户密钥已加载
         if (_currentUserKeys == null) {
-          print('✗ 用户密钥未加载');
           _updateState(CallState.error);
           _cleanup();
           return;
@@ -783,24 +821,57 @@ class CallService {
         );
         
         if (!isValid) {
-          print('✗ Answer 签名验证失败');
           _updateState(CallState.error);
           _cleanup();
           return;
         }
-        
-        print('✓ Answer 签名验证通过');
       }
+
+      // 签名验证通过后，解密 answer
+      final sessionKey = _sessionKeys[_currentPeerId!];
+      if (sessionKey == null) {
+        _updateState(CallState.error);
+        _cleanup();
+        return;
+      }
+      
+      // 解密 WebRTC answer
+      final answerJson = _cryptoService.decryptAesGcm(
+        sessionKey,
+        answerData['ciphertext']!,
+        answerData['iv']!,
+        answerData['tag']!
+      );
+      final decryptedAnswer = jsonDecode(answerJson);
+
+      // 设置远程描述
+      final remoteDesc = RTCSessionDescription(
+        decryptedAnswer['sdp'],
+        decryptedAnswer['type'],
+      );
+      await _peerConnection!.setRemoteDescription(remoteDesc);
     } catch (e) {
-      print('处理 answer 失败: $e');
     }
   }
 
   /// 处理 ICE 候选者消息
   Future<void> _handleNewICECandidateMsg(Map<String, dynamic> data) async {
     try {
-      print('处理 ICE 候选者消息');
       if (_peerConnection == null) return;
+
+      // 检查 PeerConnection 状态，确保可以添加 ICE 候选者
+      final currentState = await _peerConnection!.getConnectionState();
+      if (currentState == RTCPeerConnectionState.RTCPeerConnectionStateClosed ||
+          currentState == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        return;
+      }
+
+      // 检查远程描述是否已设置
+      final remoteDesc = await _peerConnection!.getRemoteDescription();
+      if (remoteDesc == null) {
+        // 可以在这里实现 ICE 候选者缓冲队列
+        return;
+      }
 
       final candidate = RTCIceCandidate(
         data['candidate']['candidate'],
@@ -808,9 +879,7 @@ class CallService {
         data['candidate']['sdpMLineIndex'],
       );
       await _peerConnection!.addCandidate(candidate);
-      print('已添加 ICE 候选者');
     } catch (e) {
-      print('添加 ICE 候选者失败: $e');
     }
   }
 
@@ -818,7 +887,6 @@ class CallService {
 
   /// 处理来电
   void _handleIncomingCall(Map<String, dynamic> data) {
-    print('收到来电: $data');
     final fromUserId = data['fromUserId'] as String?;
     final isOnlyAudio = data['isOnlyAudio'] as bool? ?? true;
     final kemCiphertext = data['kemCiphertext'] as String?;
@@ -903,9 +971,7 @@ class CallService {
       });
 
       _dataChannel!.send(RTCDataChannelMessage(payload));
-      print('安全消息已发送');
     } catch (e) {
-      print('发送安全消息失败: $e');
       throw Exception('发送安全消息失败: $e');
     }
   }
@@ -921,7 +987,6 @@ class CallService {
       final timestamp = data['timestamp'] as int;
 
       if (ciphertext == null || iv == null || tag == null) {
-        print('消息格式错误，缺少必要字段');
         return;
       }
 
@@ -942,7 +1007,6 @@ class CallService {
       );
 
       if (!isValid) {
-        print('消息签名验证失败');
         return;
       }
 
@@ -952,13 +1016,10 @@ class CallService {
       // 检查消息是否过期（30秒内有效）
       final age = DateTime.now().millisecondsSinceEpoch - timestamp;
       if (age > 30000) {
-        print('消息已过期，忽略');
         return;
       }
 
-      print('收到安全消息: $decrypted');
     } catch (e) {
-      print('处理安全消息失败: $e');
     }
   }
 
@@ -967,13 +1028,11 @@ class CallService {
   /// 尝试重连
   void _attemptReconnect() {
     if (_reconnectAttempts >= _maxReconnectAttempts) {
-      print('已达到最大重连次数');
       handleHangup();
       return;
     }
 
     _reconnectAttempts++;
-    print('尝试重连 ($_reconnectAttempts/$_maxReconnectAttempts)');
 
     _reconnectTimer = Timer(_reconnectDelay, () async {
       if (_peerConnection != null) {
@@ -992,33 +1051,31 @@ class CallService {
 
   /// 挂断通话
   void handleHangup() {
-    print('handleHangup 被调用');
-    endCall();
+    // 如果当前状态已经是被拒绝，不应该再结束通话
+    if (_currentState != CallState.rejected) {
+      endCall();
+    }
   }
 
   /// 处理被拒绝
   void _handleRejected() {
-    print('[CallService] ========================================');
-    print('[CallService] >>> _handleRejected 被调用 <<<');
-    print('[CallService] 当前状态: $_currentState');
-    print('[CallService] ========================================');
     _cleanup();
     _updateState(CallState.rejected);
-    print('[CallService] _handleRejected 处理完成');
   }
 
   /// 结束通话
   Future<void> endCall() async {
     try {
-      print('endCall 被调用');
+      // 如果当前状态已经是被拒绝，不应该再更新状态
+      if (_currentState == CallState.rejected) {
+        return;
+      }
       if (_currentPeerId != null) {
         await _audioApi.hangup(_currentPeerId!);
       }
       _cleanup();
       _updateState(CallState.ended);
-      print('通话已结束');
     } catch (e) {
-      print('结束通话失败: $e');
       _updateState(CallState.error);
     }
   }
@@ -1036,16 +1093,17 @@ class CallService {
   /// 清理资源
   void _cleanup() {
     if (_isCleanupInProgress) {
-      print('清理已在进行，跳过重复清理');
       return;
     }
     
     _isCleanupInProgress = true;
-    print('开始清理资源...');
 
     _destroyTimer();
     _destroyReconnectTimer();
     _reconnectAttempts = 0;
+    
+    // 停止铃声
+    stopRingtone();
 
     if (_currentPeerId != null) {
       clearSessionKey(_currentPeerId!);
@@ -1080,8 +1138,6 @@ class CallService {
     _currentUserKeys = null;
     
     _isCleanupInProgress = false;
-
-    print('资源清理完成');
   }
 
   /// 销毁重连计时器
@@ -1112,23 +1168,71 @@ class CallService {
 
   /// 切换扬声器
   Future<void> toggleSpeaker() async {
-    print('切换扬声器功能');
   }
 
   /// 切换听筒
   Future<void> toggleEarpiece() async {
-    print('切换听筒功能');
+  }
+
+  /// 播放铃声
+  Future<void> playRingtone() async {
+    try {
+      // 停止之前可能正在播放的音频
+      await _audioPlayer.stop();
+      // 重置播放器状态
+      await _audioPlayer.seek(Duration.zero);
+      
+      // 设置音频源
+      await _audioPlayer.setSource(AssetSource('Atria.ogg'));
+      
+      // 设置音量
+      await _audioPlayer.setVolume(1.0);
+      
+      // 设置循环播放
+      await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+      
+      // 开始播放
+      await _audioPlayer.resume();
+    } catch (e) {
+      // 尝试使用不同的方式播放
+      try {
+        await _audioPlayer.play(AssetSource('Atria.ogg'));
+      } catch (e2) {
+        // 尝试使用延迟播放
+        try {
+          await Future.delayed(Duration(milliseconds: 100));
+          await _audioPlayer.play(AssetSource('Atria.ogg'));
+        } catch (e3) {
+        }
+      }
+    }
+  }
+
+  /// 停止铃声
+  Future<void> stopRingtone() async {
+    try {
+      await _audioPlayer.stop();
+    } catch (e) {
+    }
   }
 
   /// 更新通话状态
   void _updateState(CallState state) {
-    print('[CallService] 更新状态: $_currentState -> $state');
     _currentState = state;
+    
+    // 控制铃声
+    if (state == CallState.ringing) {
+      playRingtone();
+    } else if (state == CallState.connecting || 
+               state == CallState.connected || 
+               state == CallState.ended || 
+               state == CallState.rejected || 
+               state == CallState.error) {
+      stopRingtone();
+    }
+    
     if (!_callStateController.isClosed) {
       _callStateController.add(state);
-      print('[CallService] 状态已发送到流: $state');
-    } else {
-      print('[CallService] 警告: _callStateController 已关闭');
     }
   }
 

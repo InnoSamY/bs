@@ -37,31 +37,26 @@ class CryptoService {
   /// - tag: Base64编码的认证标签
   Map<String, String> encryptAesGcm(String key, String plaintext) {
     print('执行AES-256-GCM加密...');
+    print('  原文: $plaintext');
 
     try {
-      // 解码密钥
       final keyBytes = base64Decode(key);
       
-      // 确保密钥长度为 32 字节（AES-256）
       final aesKey = keyBytes.length >= 32 
           ? keyBytes.sublist(0, 32)
           : Uint8List.fromList(List<int>.filled(32 - keyBytes.length, 0) + keyBytes);
       
-      // 生成随机 IV（12 字节用于 GCM）
       final iv = _generateRandomBytes(12);
       
-      // 创建 AES-256-GCM 加密器
       final cipher = GCMBlockCipher(AESEngine())
         ..init(
           true,
           AEADParameters(KeyParameter(aesKey), 128, iv, Uint8List(0)),
         );
       
-      // 加密数据
       final plaintextBytes = utf8.encode(plaintext);
       final encrypted = cipher.process(Uint8List.fromList(plaintextBytes));
       
-      // 提取认证标签（最后 16 字节）
       final tag = encrypted.sublist(encrypted.length - 16);
       final ciphertext = encrypted.sublist(0, encrypted.length - 16);
 
@@ -71,7 +66,10 @@ class CryptoService {
 
       print('✓ AES-256-GCM加密成功');
       print('  明文长度: ${plaintext.length} 字节');
+      print('  密文: $ciphertextBase64');
       print('  密文长度: ${ciphertext.length} 字节');
+      print('  IV: $ivBase64');
+      print('  认证标签: $tagBase64');
 
       return {
         'ciphertext': ciphertextBase64,
@@ -97,41 +95,36 @@ class CryptoService {
   /// 返回：解密后的明文
   String decryptAesGcm(String key, String ciphertext, String iv, String tag) {
     print('执行AES-256-GCM解密...');
+    print('  密文: $ciphertext');
 
     try {
-      // 解码密钥
       final keyBytes = base64Decode(key);
       
-      // 确保密钥长度为 32 字节（AES-256）
       final aesKey = keyBytes.length >= 32 
           ? keyBytes.sublist(0, 32)
           : Uint8List.fromList(List<int>.filled(32 - keyBytes.length, 0) + keyBytes);
       
-      // 解码密文、IV 和标签
       final ciphertextBytes = base64Decode(ciphertext);
       final ivBytes = base64Decode(iv);
       final tagBytes = base64Decode(tag);
 
-      // 组合密文和标签
       final encrypted = Uint8List(ciphertextBytes.length + tagBytes.length);
       encrypted.setAll(0, ciphertextBytes);
       encrypted.setAll(ciphertextBytes.length, tagBytes);
 
-      // 创建 AES-256-GCM 解密器
       final cipher = GCMBlockCipher(AESEngine())
         ..init(
           false,
           AEADParameters(KeyParameter(aesKey), 128, ivBytes, Uint8List(0)),
         );
       
-      // 解密数据
       final decrypted = cipher.process(encrypted);
       
-      // 将解密后的字节转换为字符串
       final decryptedText = utf8.decode(decrypted);
 
       print('✓ AES-256-GCM解密成功');
       print('  密文长度: ${ciphertext.length} 字节');
+      print('  明文: $decryptedText');
       print('  明文长度: ${decryptedText.length} 字节');
 
       return decryptedText;
@@ -152,9 +145,14 @@ class CryptoService {
   /// 
   /// 返回：Base64编码的哈希值
   String sha256Hash(String data) {
+    print('执行 SHA-256 哈希...');
+    print('  原文: $data');
     final bytes = utf8.encode(data);
     final hash = sha256.convert(bytes);
-    return base64Encode(hash.bytes);
+    final hashBase64 = base64Encode(hash.bytes);
+    print('✓ SHA-256 哈希成功');
+    print('  哈希值: $hashBase64');
+    return hashBase64;
   }
 
   /// 派生AES-256密钥（SHA-256）
@@ -166,9 +164,14 @@ class CryptoService {
   /// 
   /// 返回：Base64编码的32字节AES-256密钥
   String deriveAesKey(String input) {
+    print('派生 AES-256 密钥（SHA-256）...');
+    print('  输入: $input');
     final bytes = utf8.encode(input);
     final hash = sha256.convert(bytes);
-    return base64Encode(hash.bytes);
+    final aesKey = base64Encode(hash.bytes);
+    print('✓ AES-256 密钥派生成功');
+    print('  派生密钥: $aesKey');
+    return aesKey;
   }
 
   // ========== 内部辅助方法 ==========

@@ -37,7 +37,7 @@ allprojects {
     }
 }
 
-// 🔥🔥🔥 关键修复：确保所有子项目都强制使用阿里云镜像
+// 🔥🔥🔥 关键修复：确保所有子项目都强制使用阿里云镜像和统一的SDK版本
 subprojects {
     // 在项目配置完成后，确保仓库配置正确
     afterEvaluate {
@@ -58,6 +58,16 @@ subprojects {
                 maven { url = uri("https://jitpack.io") }
 
                 println("已为子项目 ${project.name} 强制配置阿里云镜像")
+            }
+
+            // 强制统一编译SDK版本
+            project.extensions.findByType<com.android.build.gradle.LibraryExtension>()?.let {
+                it.compileSdkVersion(36)
+                println("已为子项目 ${project.name} 强制设置compileSdkVersion为36")
+            }
+            project.extensions.findByType<com.android.build.gradle.AppExtension>()?.let {
+                it.compileSdkVersion(36)
+                println("已为子项目 ${project.name} 强制设置compileSdkVersion为36")
             }
         }
     }
@@ -107,6 +117,8 @@ allprojects {
             force("com.android.tools.build:gradle:8.13.1")
         }
     }
+    
+
 }
 
 tasks.register<Delete>("clean") {

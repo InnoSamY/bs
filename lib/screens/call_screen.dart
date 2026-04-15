@@ -70,14 +70,11 @@ class _CallScreenState extends State<CallScreen> {
     _callService.audioEvent();
 
     _callService.callStateStream.listen((state) {
-      print('[CallScreen] 收到状态更新: $state');
       if (!mounted) {
-        print('[CallScreen] 页面已卸载，忽略状态更新');
         return;
       }
 
       setState(() {
-        print('[CallScreen] 更新 UI 状态: $state');
         switch (state) {
           case CallState.calling:
             _statusText = '正在呼叫...';
@@ -93,11 +90,10 @@ class _CallScreenState extends State<CallScreen> {
             break;
           case CallState.ended:
             _statusText = '通话结束';
-            _closeScreen();
+            Future.delayed(Duration(seconds: 2), _closeScreen);
             break;
           case CallState.rejected:
             _statusText = '对方拒绝接听';
-            print('[CallScreen] 显示"对方拒绝接听"');
             Future.delayed(Duration(seconds: 2), _closeScreen);
             break;
           case CallState.error:
@@ -142,7 +138,6 @@ class _CallScreenState extends State<CallScreen> {
         });
       }
     } catch (e) {
-      print('初始化通话失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('通话初始化失败: $e')),
@@ -172,7 +167,6 @@ class _CallScreenState extends State<CallScreen> {
         widget.signature!,
       );
     } catch (e) {
-      print('接受通话失败: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('接受通话失败: $e')),
@@ -184,7 +178,6 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _rejectCall() async {
     // 防止重复调用 - 立即设置标志，不依赖 setState
     if (_isRejecting) {
-      print('[CallScreen] 拒绝操作已在进行中，跳过');
       return;
     }
     
@@ -194,16 +187,12 @@ class _CallScreenState extends State<CallScreen> {
     // 立即更新 UI
     setState(() {});
     
-    print('[CallScreen] _rejectCall 被调用');
-    
     try {
       await _callService.rejectCall();
       if (mounted) {
-        print('[CallScreen] 关闭页面');
         Navigator.pop(context);
       }
     } catch (e) {
-      print('[CallScreen] 拒绝通话失败: $e');
       // 失败时重置标志并更新 UI
       _isRejecting = false;
       if (mounted) {
@@ -214,9 +203,6 @@ class _CallScreenState extends State<CallScreen> {
 
   Future<void> _endCall() async {
     await _callService.endCall();
-    if (mounted) {
-      Navigator.pop(context);
-    }
   }
 
   void _closeScreen() {
