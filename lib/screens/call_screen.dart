@@ -218,10 +218,13 @@ class _CallScreenState extends State<CallScreen> {
     _callService.setMute(_isMuted);
   }
 
-  void _toggleSpeaker() {
-    setState(() {
-      _isSpeakerOn = !_isSpeakerOn;
-    });
+  void _toggleSpeaker() async {
+    final isSpeakerOn = await _callService.toggleSpeaker();
+    if (mounted) {
+      setState(() {
+        _isSpeakerOn = isSpeakerOn;
+      });
+    }
   }
 
   String _formatDuration(int seconds) {

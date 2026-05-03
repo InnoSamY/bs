@@ -7,8 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// 提供与服务器通信的接口，用于信令交换和密钥传输。
 /// 
 /// 主要功能：
-/// 1. 安全邀请 V2（secureInviteV2）
-/// 2. 安全应答 V2（answerV2）
+/// 1. 安全邀请（SecureInvite）
+/// 2. 安全应答（SecureAnswer）
 /// 3. ICE 候选者交换（candidate）
 /// 4. 通话结束（hangup）
 /// 5. 拒绝通话（reject）
@@ -103,7 +103,7 @@ class AudioApi {
 
 
 
-  /// 发送安全邀请 V2（新版）
+  /// 发送安全邀请（新版）
   /// 
   /// 包含完整的后量子安全信息：
   /// - ML-KEM 密文
@@ -118,7 +118,7 @@ class AudioApi {
   /// - sigPublicKey: 签名公钥
   /// - offer: WebRTC Offer
   /// - timestamp: 时间戳
-  Future<Map<String, dynamic>> secureInviteV2(
+  Future<Map<String, dynamic>> secureInvite(
     String userId,
     bool isOnlyAudio,
     String kemCiphertext,
@@ -138,7 +138,7 @@ class AudioApi {
     });
   }
 
-  /// 发送应答 V2（新版）
+  /// 发送安全应答（新版）
   /// 
   /// 包含完整的后量子安全信息：
   /// - WebRTC Answer
@@ -150,7 +150,7 @@ class AudioApi {
   /// - signature: 数字签名
   /// - sigPublicKey: 签名公钥
   /// - timestamp: 时间戳
-  Future<Map<String, dynamic>> answerV2(
+  Future<Map<String, dynamic>> secureAnswer(
     String userId,
     Map<String, dynamic> answer,
     String signature,

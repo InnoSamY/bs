@@ -480,32 +480,35 @@ class _ContactsScreenState extends State<ContactsScreen> {
               onRefresh: _loadContacts,
               color: Colors.grey[600],
               child: _contacts.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            Icons.people_outline,
-                            size: 80,
-                            color: Colors.grey[300],
-                          ),
-                          SizedBox(height: 16),
-                          Text(
-                            '暂无联系人',
-                            style: TextStyle(
-                              fontSize: 18,
-                              color: Colors.grey[500],
+                  ? SingleChildScrollView(
+                      physics: AlwaysScrollableScrollPhysics(),
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.people_outline,
+                              size: 80,
+                              color: Colors.grey[300],
                             ),
-                          ),
-                          SizedBox(height: 8),
-                          Text(
-                            '点击右下角按钮添加联系人',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[400],
+                            SizedBox(height: 16),
+                            Text(
+                              '暂无联系人',
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: Colors.grey[500],
+                              ),
                             ),
-                          ),
-                        ],
+                            SizedBox(height: 8),
+                            Text(
+                              '点击右下角按钮添加联系人',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey[400],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     )
                   : ListView.builder(
@@ -563,11 +566,14 @@ class _ContactsScreenState extends State<ContactsScreen> {
                     ),
             ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          Navigator.push(
+        onPressed: () async {
+          final result = await Navigator.push(
             context,
             MaterialPageRoute(builder: (context) => AddContactScreen()),
           );
+          if (result == true) {
+            _loadContacts();
+          }
         },
         child: Icon(Icons.add, color: Colors.white),
         backgroundColor: Colors.grey[800],

@@ -123,7 +123,7 @@ class CryptoService {
       final decryptedText = utf8.decode(decrypted);
 
       print('✓ AES-256-GCM解密成功');
-      print('  密文长度: ${ciphertext.length} 字节');
+      print('  密文长度: ${ciphertextBytes.length} 字节');
       print('  明文: $decryptedText');
       print('  明文长度: ${decryptedText.length} 字节');
 

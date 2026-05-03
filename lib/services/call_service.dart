@@ -133,6 +133,9 @@ class CallService {
   bool _toUserIsReady = false;
   bool get toUserIsReady => _toUserIsReady;
 
+  bool _isSpeakerOn = false;
+  bool get isSpeakerOn => _isSpeakerOn;
+
   // ==================== 计时器 ====================
   Timer? _timer;
   int _time = 0;
@@ -350,6 +353,7 @@ class CallService {
       print('  AES 密钥长度: ${base64Decode(aesKey).length} 字节');
 
       // 初始化媒体设备
+      await initializeAudioSession();
       await _initializeLocalStream();
       await _createPeerConnectionInternal();
 
@@ -365,6 +369,15 @@ class CallService {
       if (completeOffer == null) {
         throw Exception('获取本地描述失败');
       }
+
+      // 打印 SDP 内容
+      print('=== WebRTC Offer SDP ===');
+      print('Type: ${completeOffer.type}');
+      print('SDP:');
+      completeOffer.sdp?.split('\n').forEach((line) {
+        print(line);
+      });
+      print('========================');
 
       // 构建呼叫消息
       final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
@@ -394,7 +407,7 @@ class CallService {
       );
 
       // 发送带签名的呼叫请求
-      final result = await _audioApi.secureInviteV2(
+      final result = await _audioApi.secureInvite(
         calleeId,
         isOnlyAudio,
         ciphertext,
@@ -493,6 +506,7 @@ class CallService {
       final decryptedOffer = jsonDecode(offerJson);
 
       // 初始化媒体设备
+      await initializeAudioSession();
       await _initializeLocalStream();
       await _createPeerConnectionInternal();
 
@@ -512,6 +526,15 @@ class CallService {
       if (completeAnswer == null) {
         throw Exception('获取本地描述失败');
       }
+
+      // 打印 SDP 内容
+      print('=== WebRTC Answer SDP ===');
+      print('Type: ${completeAnswer.type}');
+      print('SDP:');
+      completeAnswer.sdp?.split('\n').forEach((line) {
+        print(line);
+      });
+      print('=========================');
 
       // 对 answer 签名
       final answerTimestamp = DateTime.now().millisecondsSinceEpoch.toString();
@@ -538,7 +561,7 @@ class CallService {
       );
 
       // 发送带签名的 answer
-      final result = await _audioApi.answerV2(
+      final result = await _audioApi.secureAnswer(
         callerId,
         encryptedAnswer, // 发送加密后的answer
         answerSignature,
@@ -651,13 +674,16 @@ class CallService {
     _peerConnection!.onIceCandidate = _handleICECandidateEvent;
     _peerConnection!.onIceConnectionState = _handleICEConnectionStateChangeEvent;
     _peerConnection!.onTrack = _handleTrackEvent;
-    _peerConnection!.onConnectionState = (state) {
-      // 测试一：记录通话建立完成时间
+    _peerConnection!.onConnectionState = (state) async {
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected && _callStartTime != null) {
         final callEndTime = DateTime.now();
         final callDuration = callEndTime.difference(_callStartTime!).inMilliseconds;
         print('测试一：通话建立完成时间: ${callEndTime.toString()}');
         print('测试一：通话建立时延: ${callDuration}ms');
+
+        // 通话连接建立后，确保音频路由设置正确
+        await Helper.setSpeakerphoneOn(_isSpeakerOn);
+        print('通话连接建立，音频输出: ${_isSpeakerOn ? "扬声器" : "听筒"}');
       }
     };
 
@@ -1090,6 +1116,63 @@ class CallService {
     }
   }
 
+  /// 初始化音频会话
+  ///
+  /// 配置音频路由为通话模式
+  Future<void> initializeAudioSession() async {
+    try {
+      // 确保初始状态为听筒模式
+      _isSpeakerOn = false;
+      await Helper.setSpeakerphoneOn(false);
+      print('✓ 音频会话初始化成功，初始状态：听筒模式');
+    } catch (e) {
+      print('音频会话初始化失败: $e');
+    }
+  }
+
+  /// 切换扬声器状态
+  ///
+  /// 在听筒和扬声器之间切换
+  ///
+  /// 返回：
+  /// - true: 切换到扬声器模式
+  /// - false: 切换到听筒模式
+  Future<bool> toggleSpeaker() async {
+    try {
+      _isSpeakerOn = !_isSpeakerOn;
+
+      print('切换扬声器: _isSpeakerOn = $_isSpeakerOn');
+
+      // 使用 Helper 类的静态方法来控制扬声器
+      await Helper.setSpeakerphoneOn(_isSpeakerOn);
+      print('Helper.setSpeakerphoneOn 返回值: $_isSpeakerOn');
+
+      // 等待音频路由切换完成
+      await Future.delayed(Duration(milliseconds: 200));
+
+      print('音频输出: ${_isSpeakerOn ? "扬声器" : "听筒"}');
+      return _isSpeakerOn;
+    } catch (e) {
+      print('切换扬声器失败: $e');
+      _isSpeakerOn = !_isSpeakerOn;
+      return _isSpeakerOn;
+    }
+  }
+
+  /// 设置扬声器状态
+  ///
+  /// 直接设置扬声器开或关
+  Future<void> setSpeaker(bool on) async {
+    try {
+      _isSpeakerOn = on;
+      await Helper.setSpeakerphoneOn(_isSpeakerOn);
+      await Future.delayed(Duration(milliseconds: 200));
+      print('音频输出: ${_isSpeakerOn ? "扬声器" : "听筒"}');
+    } catch (e) {
+      print('设置扬声器失败: $e');
+    }
+  }
+
   /// 清理资源
   void _cleanup() {
     if (_isCleanupInProgress) {
@@ -1164,14 +1247,6 @@ class CallService {
         track.enabled = _isAudioEnabled;
       });
     }
-  }
-
-  /// 切换扬声器
-  Future<void> toggleSpeaker() async {
-  }
-
-  /// 切换听筒
-  Future<void> toggleEarpiece() async {
   }
 
   /// 播放铃声

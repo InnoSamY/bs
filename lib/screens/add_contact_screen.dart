@@ -37,7 +37,7 @@ class _AddContactScreenState extends State<AddContactScreen> {
           verificationMessage: '请求添加您为联系人',
         );
 
-        Navigator.pop(context);
+        Navigator.pop(context, true);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('联系人添加请求已发送')),
         );
